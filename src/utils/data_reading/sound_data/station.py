@@ -153,15 +153,15 @@ class StationsCatalog():
                 res.add_station(st)
         return res
 
-    def by_date_propagation(self, event, sound_model, delta=None):
+    def by_date_propagation(self, event_pos, event_date, sound_model, delta=None):
         res = []
         times_of_prop = []
         delta = delta or datetime.timedelta(seconds=0)
         for st in self.stations:
-            time_of_prop = sound_model.get_sound_travel_time(event.get_pos(), st.get_pos(), event.date)
+            time_of_prop = sound_model.get_sound_travel_time(event_pos, st.get_pos(), event_date)
             if not time_of_prop:
                 continue
-            time_of_arrival = event.date + datetime.timedelta(seconds=time_of_prop)
+            time_of_arrival = event_date + datetime.timedelta(seconds=time_of_prop)
             if st.date_start < time_of_arrival - delta < st.date_end and \
             st.date_start < time_of_arrival + delta < st.date_end:
                 times_of_prop.append(time_of_prop)
