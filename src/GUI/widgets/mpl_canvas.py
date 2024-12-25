@@ -17,25 +17,25 @@ class MplCanvas(FigureCanvasQTAgg):
         self.parent = parent
         self.axes = fig.add_subplot(111)
 
-        def onclick(click):
+        def on_click(click):
             """ Redirect click event to the parent.
             :param click: Variable giving information about the click.
             :return: None.
             """
             if parent:
-                self.parent.onclickGraph(click)
+                self.parent.on_click(click)
 
-        def onkey(key):
+        def on_key(key):
             """ Redirect key press event to the parent.
             :param key: Variable giving information about the key press.
             :return: None.
             """
             if parent:
-                self.parent.onkeyGraph(key)
+                self.parent.on_key(key)
 
         # assign the triggers
-        fig.canvas.mpl_connect('button_press_event', onclick)
-        fig.canvas.mpl_connect('key_press_event', onkey)
+        fig.canvas.mpl_connect('button_press_event', on_click)
+        fig.canvas.mpl_connect('key_press_event', on_key)
         fig.canvas.mpl_connect("scroll_event", self.scroll)
         self.setFocusPolicy(Qt.StrongFocus)  # allow focusing on the widget
 

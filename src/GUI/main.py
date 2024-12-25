@@ -18,7 +18,7 @@ if __name__ == "__main__":
     if not Path(tissnet_checkpoint).exists():
         tissnet_checkpoint = None
 
-    window = SpectralViewerWindow(datasets_yaml, tissnet_checkpoint=tissnet_checkpoint)
+    window = SpectralViewerWindow(datasets_yaml, tissnet_checkpoint=tissnet_checkpoint, events_path="../../data/GUI/events.yaml")
     window.show()
 
     sys.exit(app.exec())

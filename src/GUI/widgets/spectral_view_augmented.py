@@ -1,11 +1,13 @@
 import numpy as np
 import torch
-from scipy import signal
+from torchvision.transforms import Resize
 from scipy.signal import find_peaks
 from skimage.transform import resize
 
 from GUI.widgets.mpl_canvas import MplCanvas
 from GUI.widgets.spectral_view import SpectralView, MIN_SEGMENT_DURATION_S
+from utils.physics.signal.make_spectrogram import make_spectrogram
+
 
 class SpectralViewTissnet(SpectralView):
     """ Spectral view enabling, with shift+enter, to apply TiSSNet on the current spectrogram.
@@ -20,22 +22,20 @@ class SpectralViewTissnet(SpectralView):
         :param kwargs: Supplementary key arguments for the widget as a PySide widget.
         """
         super().__init__(SpectralViewer, station, date, delta_view_s, *args, **kwargs)
-        self.initMpl()
+        self.init_mpl()
         self.mpl_layout.addWidget(self.mpl_models)
 
-    def onkeyGraph(self, key):
+    def on_key(self, key):
         """ Checks if the TiSSNet shortcut has been pressed.
         :param key: The key pressed.
         :return: None.
         """
         if key.key == "shift+enter":
-            self.processTissnet()
-        elif key.key == "alt+enter":
-            self.spectralViewer.associate(self)
+            self.process_tissnet()
         else:
-            super().onkeyGraph(key)
+            super().on_key(key)
 
-    def initMpl(self):
+    def init_mpl(self):
         """ Initialize the Matplotlib widget.
         :return: None
         """
@@ -45,7 +45,7 @@ class SpectralViewTissnet(SpectralView):
         self.mpl_models.setFixedHeight(40)
         self.mpl_models.setVisible(False)
 
-    def processTissnet(self):
+    def process_tissnet(self):
         """ Apply TiSSNet on the current spectrogram and adds the result below it with a colormap.
         :return: None.
         """
@@ -53,21 +53,14 @@ class SpectralViewTissnet(SpectralView):
             print("Trying to use TiSSNet but it has not been loaded")
             return
 
-        start, end = self.getTimeBounds()
+        start, end = self.get_time_bounds()
         data = self.manager.get_segment(start, end)
-        (f, t, spectro) = signal.spectrogram(data, self.manager.sampling_f, nperseg=256, noverlap=128)
-        spectro = 10 * np.log10(spectro).astype(np.float32)[::-1].copy()
-        # normalization
-        spectro = resize(spectro, (1, 128, spectro.shape[2]))[np.newaxis, :, :]
-        spectro[spectro < -35] = -35
-        spectro[spectro > 140] = 140
-        spectro = (spectro + 35) / (35 + 140)
-        spectro = torch.from_numpy(spectro)
+        spectrogram = make_spectrogram(data, self.manager.sampling_f, t_res=0.5342, f_res=0.9375, return_bins=False,
+                                       normalize=True, vmin=-35, vmax=140).astype(np.float32)
+        spectrogram = spectrogram[np.newaxis, :, :]
+        input_data = Resize((128, spectrogram.shape[-1]))(torch.from_numpy(spectrogram))  # resize data
         with torch.no_grad():
-            res = self.spectralViewer.detection_model(spectro).numpy()
-
-        peaks = find_peaks(res, height=0.1, distance=10)
-        print(peaks)
+            res = self.spectralViewer.detection_model(input_data).numpy()
 
         self.showModelResult(res)
 
@@ -77,7 +70,7 @@ class SpectralViewTissnet(SpectralView):
         :return: None.
         """
         self.mpl_layout.removeWidget(self.mpl_models)
-        self.initMpl()
+        self.init_mpl()
         self.mpl_layout.addWidget(self.mpl_models)
 
         self.mpl_models.axes.imshow(to_show.reshape((1, -1)), aspect="auto", vmin=0, vmax=1)

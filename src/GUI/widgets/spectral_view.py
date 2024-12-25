@@ -11,6 +11,7 @@ from playsound import playsound
 from scipy import signal
 
 from GUI.widgets.mpl_canvas import MplCanvas
+from utils.physics.signal.make_spectrogram import make_spectrogram
 
 # minimal duration of the spectrograms shown, in s
 MIN_SEGMENT_DURATION_S = 30
@@ -90,9 +91,9 @@ class SpectralView(QtWidgets.QWidget):
         self.segment_length_doubleSpinBox.setValue(2 * delta_view_s)
         self.segment_length_layout.addWidget(self.segment_length_doubleSpinBox, 1, 0, 1, 1)
         # spin box triggers to update the allowed segment date range, the slider and the plot when changed
-        self.segment_length_doubleSpinBox.valueChanged.connect(self.updateDatesBounds)
-        self.segment_length_doubleSpinBox.valueChanged.connect(self.updateSegmentLengthSlider)
-        self.segment_length_doubleSpinBox.valueChanged.connect(self.updatePlot)
+        self.segment_length_doubleSpinBox.valueChanged.connect(self.update_date_bounds)
+        self.segment_length_doubleSpinBox.valueChanged.connect(self.update_segment_length_slider)
+        self.segment_length_doubleSpinBox.valueChanged.connect(self.update_plot)
 
         # segment length slider
         self.segment_length_slider = QSlider(self)
@@ -101,7 +102,7 @@ class SpectralView(QtWidgets.QWidget):
         self.segment_length_slider.setOrientation(Qt.Horizontal)
         self.segment_length_layout.addWidget(self.segment_length_slider, 2, 0, 1, 3)
         # slider trigger to update the spin box when released (and recursively the plot)
-        self.segment_length_slider.sliderReleased.connect(self.updateSegmentLengthEditor)
+        self.segment_length_slider.sliderReleased.connect(self.update_segment_length_editor)
 
         # controller of the segment date, made of a date time editor and a slider, both interconnected
         # segment date layout
@@ -118,21 +119,21 @@ class SpectralView(QtWidgets.QWidget):
         self.segment_date_dateTimeEdit = QDateTimeEdit(self)
         self.segment_date_dateTimeEdit.setInputMethodHints(Qt.ImhPreferNumbers)
         self.segment_date_dateTimeEdit.setDisplayFormat("yyyy/MM/dd hh:mm:ss")
-        self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(self.manager.dataset_start))
+        self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(self.manager.dataset_start))
         self.segment_date_layout.addWidget(self.segment_date_dateTimeEdit, 1, 0, 1, 1)
         # set the initital date
         if date is not None:
-            self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(date))
+            self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(date))
         # date time edit triggers to update the slider and the plot when changed
-        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.updateSegmentDateSlider)
-        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.updatePlot)
+        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_segment_date_slider)
+        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
 
         # segment date slider
         self.segment_date_slider = QSlider(self)
         self.segment_date_slider.setOrientation(Qt.Horizontal)
         self.segment_date_layout.addWidget(self.segment_date_slider, 2, 0, 1, 3)
         # slider trigger to update the date time edit when released (and recursively the plot)
-        self.segment_date_slider.sliderReleased.connect(self.updateSegmentDateEditor)
+        self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
 
         # mpl canvas containing the spectrogram
         self.mpl_layout = QtWidgets.QVBoxLayout()
@@ -143,10 +144,10 @@ class SpectralView(QtWidgets.QWidget):
 
         # initialize the different widgets
         self.layout.setStretch(1, 5)
-        self.updateDatesBounds()
-        self.updateSegmentLengthSlider()
-        self.updateSegmentDateSlider()
-        self.updatePlot()
+        self.update_date_bounds()
+        self.update_segment_length_slider()
+        self.update_segment_date_slider()
+        self.update_plot()
 
     def close_button_click(self):
         """ Close the current spectral_view.
@@ -161,39 +162,52 @@ class SpectralView(QtWidgets.QWidget):
         self.spectralViewer.unfocus_spectral_view(self)
         self.unfocus_button.setText("Unfocus" if self.focused else "Focus")
 
-    def updateSegmentLengthEditor(self):
+    def update_segment_length_editor(self):
         """ Update the segment length spin box after the slider is changed.
         :return: None.
         """
         self.segment_length_doubleSpinBox.setValue(self.segment_length_slider.value())
 
-    def updateSegmentLengthSlider(self):
+    def update_segment_length_slider(self):
         """ Update the segment length slider after the spin box is changed.
         :return: None.
         """
         self.segment_length_slider.setValue(self.segment_length_doubleSpinBox.value())
 
-    def updateSegmentDateSlider(self):
+    def update_segment_date_slider(self):
         """ Update the segment date slider after the editor is changed.
         :return: None.
         """
-        new_date = QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                      self.segment_date_dateTimeEdit.time())
+        self.segment_date_slider.sliderReleased.disconnect(self.update_segment_date_editor)
+
+        new_date = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                         self.segment_date_dateTimeEdit.time())
         old_date = self.manager.dataset_start + datetime.timedelta(seconds=self.segment_date_slider.value())
         self.spectralViewer.notify_delta(new_date - old_date, self)
-        self.segment_date_slider.setValue((QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                                               self.segment_date_dateTimeEdit.time()) - self.manager.dataset_start).total_seconds())
+        self.segment_date_slider.setValue((Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                                                 self.segment_date_dateTimeEdit.time()) - self.manager.dataset_start).total_seconds())
 
-    def updateSegmentDateEditor(self):
+        self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
+
+    def update_segment_date_editor(self, secondary_trigger=False):
         """ Update the segment date editor after the slider is changed.
         :return: None.
         """
+        self.segment_date_dateTimeEdit.dateTimeChanged.disconnect(self.update_segment_date_slider)
+        self.segment_date_dateTimeEdit.dateTimeChanged.disconnect(self.update_plot)
+
         delta = self.segment_length_doubleSpinBox.value() / 2
         delta = datetime.timedelta(seconds=delta)
-        self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(
-            self.manager.dataset_start + delta + datetime.timedelta(seconds=self.segment_date_slider.value())))
+        old_date = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                         self.segment_date_dateTimeEdit.time())
+        new_date = self.manager.dataset_start + delta + datetime.timedelta(seconds=self.segment_date_slider.value())
+        self.spectralViewer.notify_delta(new_date - old_date, self)
+        self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(new_date))
 
-    def updateDatesBounds(self):
+        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_segment_date_slider)
+        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
+
+    def update_date_bounds(self):
         """ Update the current min and max allowed segment date given current segment length (to avoid getting out of
         the dataset).
         :return: None.
@@ -202,26 +216,25 @@ class SpectralView(QtWidgets.QWidget):
         delta = datetime.timedelta(seconds=delta)
         start = self.manager.dataset_start + delta
         end = self.manager.dataset_end - delta
-        self.segment_date_dateTimeEdit.setMinimumDateTime(DatetimeToQdatetime(start))
-        self.segment_date_dateTimeEdit.setMaximumDateTime(DatetimeToQdatetime(end))
+        self.segment_date_dateTimeEdit.setMinimumDateTime(datetime_to_Qdatetime(start))
+        self.segment_date_dateTimeEdit.setMaximumDateTime(datetime_to_Qdatetime(end))
         self.segment_date_slider.setMinimum(0)
         self.segment_date_slider.setMaximum((end - start).total_seconds())
 
-    def _updateData(self):
+    def _update_data(self):
         """ Update the spectrogram value.
         :return: None.
         """
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
-        start, end = self.getTimeBounds()
+        start, end = self.get_time_bounds()
         # get the spectro from the extractor to be able to show it
         data = self.manager.get_segment(start, end)
-        (f, t, spectro) = signal.spectrogram(data, self.manager.sampling_f, nperseg=256, noverlap=128)
-        spectro = 10*np.log10(spectro).astype(np.float32)[::-1].copy()
+        (f, t, spectro) = make_spectrogram(data, self.manager.sampling_f, t_res=0.5342, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
 
         # label the time axis from -delta to +delta
         extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
         self.mpl.axes.cla()
-        self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=255, cmap="jet")
+        self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="jet")
         self.mpl.axes.set_xlabel('t (s)')
         self.mpl.axes.set_ylabel('f (Hz)')
 
@@ -231,38 +244,38 @@ class SpectralView(QtWidgets.QWidget):
         """
         self.mpl.draw()
 
-    def updatePlot(self):
+    def update_plot(self):
         """ Update the spectrogram and then the plot widget.
         :return: None.
         """
-        self._updateData()
+        self._update_data()
         self._draw()
 
-    def onclickGraph(self, click):
+    def on_click(self, click):
         """ Handles click operation to enable point and click move.
         :param click: Object giving details about the click.
         :return: None.
         """
         if click.xdata is not None:
-            segment_center = QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                                 self.segment_date_dateTimeEdit.time())
+            segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                                   self.segment_date_dateTimeEdit.time())
             segment_center += datetime.timedelta(seconds=click.xdata)  # move to the click location
-            self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(segment_center))
+            self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
 
-    def onkeyGraph(self, key):
+    def on_key(self, key):
         """ Handles key press operations by passing the event to the parent spectral_viewer.
         :param key: Object giving details about the key press.
         :return: None.
         """
-        self.spectralViewer.onkeyGraph_spectral_view(self, key)
+        self.spectralViewer.on_key(self, key)
 
-    def onkeyGraph_local(self, key):
+    def on_key_local(self, key):
         """ Handles key press operations to enable various shortcuts, only acting on the current spectral_view.
         :param key: Object giving details about the key press.
         :return: None.
         """
-        segment_center = QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                             self.segment_date_dateTimeEdit.time())
+        segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                               self.segment_date_dateTimeEdit.time())
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
 
         if key.key == 'right':
@@ -296,7 +309,7 @@ class SpectralView(QtWidgets.QWidget):
             self.freq_range[1] += d
 
         elif key.key == "down":
-            # decrase min and max allowed frequency, respecting the limit of 0
+            # decrease min and max allowed frequency, respecting the limit of 0
             d = min(self.freq_range[0],
                     0.1 * self.manager.sampling_f / 2)
             self.freq_range[0] -= d
@@ -319,21 +332,21 @@ class SpectralView(QtWidgets.QWidget):
 
         elif key.key == "ctrl+enter":
             # put all the SpectralView widgets of the parent window to the same configuration
-            segment_center = QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                                 self.segment_date_dateTimeEdit.time())
+            segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                                   self.segment_date_dateTimeEdit.time())
             for spectralview in self.spectralViewer.SpectralViews:
                 spectralview.freq_range = self.freq_range.copy()
-                spectralview.changeDate(segment_center)
-                spectralview.changeSegmentLength(self.segment_length_doubleSpinBox.value())
+                spectralview.change_date(segment_center)
+                spectralview.change_segment_length(self.segment_length_doubleSpinBox.value())
         else:
             return
 
         # update widgets
-        self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(segment_center))
+        self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
         self.segment_length_doubleSpinBox.setValue(delta.total_seconds() * 2)
-        self.updatePlot()
+        self.update_plot()
 
-    def changeDate(self, new_date):
+    def change_date(self, new_date):
         """ Change the date the widget focuses on to a new one.
         :param new_date: The new datetime to focus on.
         :return: None.
@@ -342,9 +355,9 @@ class SpectralView(QtWidgets.QWidget):
         new_date = new_date + datetime.timedelta(seconds=round(new_date.microsecond / 10 ** 6))
         new_date = new_date.replace(microsecond=0)
         # simply update the segment date editor which will cascade the change
-        self.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(new_date))
+        self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(new_date))
 
-    def changeSegmentLength(self, new_length):
+    def change_segment_length(self, new_length):
         """ Change the current segment length.
         :param new_length: The new length, in seconds.
         :return: None.
@@ -352,18 +365,18 @@ class SpectralView(QtWidgets.QWidget):
         # simply update the segment length editor which will cascade the change
         self.segment_length_doubleSpinBox.setValue(new_length)
 
-    def getTimeBounds(self):
+    def get_time_bounds(self):
         """ Get the current time bounds of the tool and return them as a tuple.
         :return: A tuple (start, end) of datetimes.
         """
-        segment_center = QdatetimeToDatetime(self.segment_date_dateTimeEdit.date(),
-                                             self.segment_date_dateTimeEdit.time())
+        segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                               self.segment_date_dateTimeEdit.time())
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
 
         return segment_center - delta, segment_center + delta
 
 
-def QdatetimeToDatetime(qdate, qtime):
+def Qdatetime_to_datetime(qdate, qtime):
     """ Utility function to convert PySide dates and times to Python datetimes.
     :param qdate: A PySide date (Y,M,D).
     :param qtime: A Pyside time (h,m,s).
@@ -373,7 +386,7 @@ def QdatetimeToDatetime(qdate, qtime):
                              qtime.hour(), qtime.minute(), qtime.second())
 
 
-def DatetimeToQdatetime(datetime, day_offset=0):
+def datetime_to_Qdatetime(datetime, day_offset=0):
     """ Utility function to convert Python datetimes to PySide datetimes.
     :param datetime: A Python datetime.
     :return: A PySide datetime.

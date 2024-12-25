@@ -12,21 +12,22 @@ from PySide6.QtGui import (QAction)
 from PySide6.QtWidgets import (QMainWindow, QToolBar)
 from skimage.transform import resize
 
-from GUI.widgets.spectral_view import SpectralView, QdatetimeToDatetime, DatetimeToQdatetime
+from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
 from utils.physics.sound_model.sound_model import HomogeneousSoundModel
-from utils.detection.TiSSNet import TiSSNet  # seems useless but enables PyTorch to retrieve the model definition
+from utils.detection.TiSSNet import TiSSNet
 
 MIN_SPECTRAL_VIEW_HEIGHT = 400
 DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, database_yaml, tissnet_checkpoint=None):
+    def __init__(self, database_yaml, tissnet_checkpoint=None, events_path=None):
         """ Constructor initializing the window and setting its visual appearance.
         :param database_yaml: YAML file containing information about the available stations.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
+        :param events_path: Path of a yaml file describing some events.
         """
         # TiSSNet
         self.detection_model = None
@@ -34,6 +35,7 @@ class SpectralViewerWindow(QMainWindow):
             self.detection_model = TiSSNet()
             self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
 
+        self.events_path = events_path
 
         super().__init__()
         self.sound_model = HomogeneousSoundModel()
@@ -74,7 +76,7 @@ class SpectralViewerWindow(QMainWindow):
         # add a toolbar
         self.toolBar = QToolBar(self.centralWidget)
         self.addToolBar(Qt.TopToolBarArea, self.toolBar)
-        self.toolBar.actionTriggered.connect(self.toolbarAction)
+        self.toolBar.actionTriggered.connect(self.toolbar_action)
         # add a button to add sound folders
         self.action_add_a_sound_folder = QAction(self)
         self.action_add_a_sound_folder_text = "Add a sound folder"
@@ -121,7 +123,7 @@ class SpectralViewerWindow(QMainWindow):
         for view in self.SpectralViews:  # resize other spectral views if needed
             view.setFixedHeight(max(self.height() * 0.9 // len(self.SpectralViews), MIN_SPECTRAL_VIEW_HEIGHT))
 
-    def _addDir(self, directory, depth=0, max_depth=3):
+    def add_dir(self, directory, depth=0, max_depth=3):
         """ Given a directory, add a SpectralView if it is a sound files directory, else recursively look for sound
         files.
         :param directory: The directory to consider.
@@ -148,9 +150,9 @@ class SpectralViewerWindow(QMainWindow):
                 # check we didn't reach the max depth of recursive calls
                 if depth < max_depth:
                     for subdir in glob2.glob(f'{directory}/*/'):
-                        self._addDir(subdir, depth=depth+1, max_depth=max_depth)
+                        self.add_dir(subdir, depth=depth + 1, max_depth=max_depth)
 
-    def onkeyGraph_spectral_view(self, spectral_view, key):
+    def on_key(self, spectral_view, key):
         """ Method called by a spectral_view child when a key is pressed on it.
         :param spectral_view: The spectral_view focused by the user.
         :param key: Object providing information about the key pressed.
@@ -159,20 +161,20 @@ class SpectralViewerWindow(QMainWindow):
         # in case the broadcast checkbox is checked, we broadcast if possible the shortcut to all spectral view
         if self.broadcast_checkbox.isChecked() and 'enter' not in key.key:
             for spectral_view in self.SpectralViews:
-                spectral_view.onkeyGraph_local(key)
+                spectral_view.on_key_local(key)
         else:
-            spectral_view.onkeyGraph_local(key)
+            spectral_view.on_key_local(key)
 
     def notify_delta(self, delta, spectral_view):
         if self.broadcast_checkbox.isChecked():
             for spectral_view_ in self.SpectralViews:
                 if spectral_view_ != spectral_view:
-                    segment_center = QdatetimeToDatetime(spectral_view_.segment_date_dateTimeEdit.date(),
-                                                         spectral_view_.segment_date_dateTimeEdit.time())
+                    segment_center = Qdatetime_to_datetime(spectral_view_.segment_date_dateTimeEdit.date(),
+                                                           spectral_view_.segment_date_dateTimeEdit.time())
                     segment_center += delta
                     # we temporarily disable the broadcast checkbox to avoid recursive calls
                     self.broadcast_checkbox.setChecked(False)
-                    spectral_view_.segment_date_dateTimeEdit.setDateTime(DatetimeToQdatetime(segment_center))
+                    spectral_view_.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
                     self.broadcast_checkbox.setChecked(True)
 
     def clear_spectral_views(self):
@@ -184,7 +186,7 @@ class SpectralViewerWindow(QMainWindow):
         for spectral_view in self.SpectralViews.copy():
             self.close_spectral_view(spectral_view)
 
-    def toolbarAction(self, qAction):
+    def toolbar_action(self, qAction):
         """ Method triggered by a click on a toolbar button.
         :param qAction: Action variable passed by PySide when a toolbar button is clicked.
         :return: None.
@@ -193,13 +195,13 @@ class SpectralViewerWindow(QMainWindow):
         if qAction.text() == self.action_add_a_sound_folder_text:
             # open a files browser dialog to enable the user to add new SpectralView widgets to the window
             directory = QFileDialog.getExistingDirectory(self, 'directory location')  # files browser
-            self._addDir(directory)  # inspection of the selected directory
+            self.add_dir(directory)  # inspection of the selected directory
         elif qAction.text() == self.action_clear_text:
             # clear spectral views
             self.clear_spectral_views()
         elif qAction.text() == self.action_pick_event_text:
             # open a selection dialog to choose an event to visualize
-            with open("../data/GUI/events.yaml", "r") as f:
+            with open(self.events_path, "r") as f:
                 events = yaml.load(f, Loader=yaml.BaseLoader)
             self.clear_spectral_views()
             to_display = list(events.keys())
@@ -239,33 +241,11 @@ class SpectralViewerWindow(QMainWindow):
         if None in sensors_positions.reshape(-1):
             self.srcEstimateLabel.setText("Station position is missing!")
             return
-        detection_times = np.array([QdatetimeToDatetime(s.segment_date_dateTimeEdit.date(),
-                                             s.segment_date_dateTimeEdit.time()) for s in self.SpectralViews if s.focused])
+        detection_times = np.array([Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
+                                                          s.segment_date_dateTimeEdit.time()) for s in self.SpectralViews if s.focused])
         src = self.sound_model.localize_common_source(sensors_positions, detection_times)
         time = detection_times[0] + np.mean([(detection_times[i] -
                         datetime.timedelta(seconds=self.sound_model.get_sound_travel_time(src.x[1:], sensors_positions[i], detection_times[0]))) - detection_times[0]
                          for i in range(len(sensors_positions))])
         self.srcEstimateLabel.setText(f'Location estimate : {[float(f"{v:.2f}") for v in src.x]} at '
                                       f'{time.strftime("%Y%m%d_%H%M%S")} (cost {src.cost:.2f})')
-
-    def associate(self, ref_spectral_view):
-        ''' Run the embedder on all stations, taking as ref the selected one.
-        :param ref_spectral_view: The selected SpectralView (calling this method).
-        :return: None.
-        '''
-        time_res, half_focus = 0.5, 16
-        embedding_ref = ref_spectral_view.processEmbedder(margin=datetime.timedelta(seconds=10))
-        embedding_ref = embedding_ref[:, embedding_ref.shape[1]//2-half_focus:embedding_ref.shape[1]//2+half_focus]
-        embedding_ref = resize(embedding_ref, (16, 1+2*half_focus))
-        for spectral_view in self.SpectralViews:
-            if spectral_view != ref_spectral_view:
-                embedding = ref_spectral_view.processEmbedder(margin=datetime.timedelta(seconds=half_focus), keep_margin=True)
-                embedding = resize(embedding, (16, embedding.shape[1]))
-
-                half_duration = int((spectral_view.segment_length_doubleSpinBox.value() / 2) / time_res)
-                embedding = [embedding[:, embedding.shape[1]//2 + i - half_focus:embedding.shape[1]//2 + i + half_focus + 1] for i in
-                         range(-half_duration, half_duration + 1)]
-                embedding = np.array(embedding)
-                diff = np.sqrt(np.sum((embedding_ref[np.newaxis, :, :] - embedding) ** 2, axis=(1, 2)))
-                diff = diff / np.sqrt(len(diff) * 16 * 2)  # normalisation by max theoretical value
-                spectral_view.showModelResult(diff)
