@@ -14,7 +14,7 @@ if __name__ == "__main__":
     # dataset yaml to get more information about the stations ; the file can be empty
     datasets_yaml = "../../data/demo/dataset.yaml"
 
-    tissnet_checkpoint = "../../../data/models/TiSSNet/torch_save"  # TiSSNet weights for demonstration purpose ; optional
+    tissnet_checkpoint = "../../data/models/TiSSNet/torch_save"  # TiSSNet weights for demonstration purpose ; optional
     if not Path(tissnet_checkpoint).exists():
         tissnet_checkpoint = None
 

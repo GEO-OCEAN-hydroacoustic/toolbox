@@ -54,7 +54,7 @@ class SpectralViewTissnet(SpectralView):
             return
 
         start, end = self.getTimeBounds()
-        data = self.manager.getSegment(start, end)
+        data = self.manager.get_segment(start, end)
         (f, t, spectro) = signal.spectrogram(data, self.manager.sampling_f, nperseg=256, noverlap=128)
         spectro = 10 * np.log10(spectro).astype(np.float32)[::-1].copy()
         # normalization

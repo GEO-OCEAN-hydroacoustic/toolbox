@@ -214,7 +214,7 @@ class SpectralView(QtWidgets.QWidget):
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
         start, end = self.getTimeBounds()
         # get the spectro from the extractor to be able to show it
-        data = self.manager.getSegment(start, end)
+        data = self.manager.get_segment(start, end)
         (f, t, spectro) = signal.spectrogram(data, self.manager.sampling_f, nperseg=256, noverlap=128)
         spectro = 10*np.log10(spectro).astype(np.float32)[::-1].copy()
 
@@ -279,7 +279,7 @@ class SpectralView(QtWidgets.QWidget):
             delta *= 2
         elif key.key == 'enter':
             # play the sound with 20 times increased frequency
-            data = self.manager.getSegment(segment_center - delta, segment_center + delta)
+            data = self.manager.get_segment(segment_center - delta, segment_center + delta)
             data = data / np.max(np.abs(data))
 
             # write a temporary file

@@ -29,7 +29,10 @@ class SpectralViewerWindow(QMainWindow):
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         """
         # TiSSNet
-        self.detection_model = torch.load(tissnet_checkpoint).cpu() if tissnet_checkpoint else None
+        self.detection_model = None
+        if tissnet_checkpoint:
+            self.detection_model = TiSSNet()
+            self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
 
 
         super().__init__()
@@ -133,8 +136,11 @@ class SpectralViewerWindow(QMainWindow):
                 station = None
                 # check if the station is registered in the dataset
                 for st in self.stations:
-                    if st.path in directory:
+                    split = directory.split("/")
+                    s_dataset, s_name = split[-3], split[-2]
+                    if st.name == s_name and st.dataset == s_dataset:
                         station = st
+                        print(f"Station {st} recognized")
                 station = station or Station(directory, initialize_metadata=True)
                 self._add_spectral_view(station)
             # else we recursively look for .dat or .wav files
