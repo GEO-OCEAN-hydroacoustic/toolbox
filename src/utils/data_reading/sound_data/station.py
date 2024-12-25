@@ -26,7 +26,7 @@ class Station:
         self.other_kwargs = other_kwargs
         if initialize_metadata:
             self.get_manager()
-            self.name = name or self.manager.station_name
+            self.name = name or self.manager.name
             self.date_start = date_start or self.manager.dataset_start
             self.date_end = date_end or self.manager.dataset_end
 
