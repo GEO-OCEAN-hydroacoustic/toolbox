@@ -187,10 +187,7 @@ class DatFile(SoundFile):
         self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
 
         # 9 is 1st sample, 10 is start date
-        if "corr" in self.path:
-            date = file_header[10].split()
-        else:
-            date = file_header[9].split()
+        date = file_header[10].split()
         date = ' '.join(date[-4:])
         locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
         if "." in date:
