@@ -46,6 +46,7 @@ class SoundFile:
 
     def read_data_subpart(self, offset_points_start, points_to_keep):
         """ Read the specified part of the data of the file and return it.
+        In case the file data was already read we use it, otherwise we just read the relevant data of the file.
         :param offset_points_start: Number of points to skip before the data part to keep. None if from the start.
         :param points_to_keep: Number of points to keep. None in case we keep everything after the start.
         :return: The required data.
@@ -185,7 +186,8 @@ class DatFile(SoundFile):
         duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
         self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
 
-        date = file_header[9].split()
+        # 9 is 1st sample, 10 is start date
+        date = file_header[10].split()
         date = ' '.join(date[-4:])
         locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
         if "." in date:
