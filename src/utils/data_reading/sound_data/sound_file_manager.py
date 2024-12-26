@@ -149,7 +149,8 @@ class SoundFilesManager:
             # pad end if needed
             next_start = end if file_number == file_numbers[-1] else self.files[file_number+1].header["start_date"]
             if file.header["end_date"] < next_start and self.fill_empty_with_zeroes:
-                diff_s = (next_start - file.header["end_date"]).total_seconds()
+                padding_start = max(file.header["end_date"], start)  # handle case where the segment starts after file
+                diff_s = (next_start - padding_start).total_seconds()
                 data.extend([0] * round(diff_s * self.sampling_f))
 
         if len(data) == 0:
