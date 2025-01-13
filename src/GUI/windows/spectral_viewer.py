@@ -15,7 +15,7 @@ from skimage.transform import resize
 from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
-from utils.physics.sound_model.sound_model import HomogeneousSoundModel
+from utils.physics.sound_model.spherical_sound_model import HomogeneousSoundModel as SoundModel
 from utils.detection.TiSSNet import TiSSNet
 
 MIN_SPECTRAL_VIEW_HEIGHT = 400
@@ -38,7 +38,7 @@ class SpectralViewerWindow(QMainWindow):
         self.events_path = events_path
 
         super().__init__()
-        self.sound_model = HomogeneousSoundModel()
+        self.sound_model = SoundModel()
         self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
 
         self.setWindowTitle(u"Acoustic viewer")
