@@ -267,9 +267,15 @@ class WFile(SoundFile):
                 self.header["end_index"] - start_idx if self.header["end_index"] else -1
             file.seek(start_idx * self.header["bytes_per_sample"])
             data = file.read(-1 if to_read<0 else to_read * self.header["bytes_per_sample"])
-        data = np.frombuffer(data, dtype=">u4")
+        data = np.frombuffer(data, dtype=">f4")
 
         # now convert data to meaningful data
         data = butter_bandpass_filter(data, 1, 119, self.header["sampling_frequency"])
         data = data * self.header["cnt_to_upa"]
         return data
+
+    def read_data(self):
+        """ Method to read the whole file, disabled for .w which are generally very big.
+        :return: None
+        """
+        return None

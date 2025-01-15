@@ -58,7 +58,7 @@ class SoundModel():
         jacobian = self._get_jacobian_function(sensors_positions, detection_times, velocities)
 
         res = least_squares(f, x0, bounds=([t_min, x_min, y_min], [0, x_max, y_max]),
-                            jac=jacobian, method="dogbox")
+                            jac=jacobian, method="dogbox", ftol=1e-12, xtol=1e-12, gtol=1e-12)
 
         res.x[1:] = self._transform_coordinates_reverse(res.x[1:])
 
