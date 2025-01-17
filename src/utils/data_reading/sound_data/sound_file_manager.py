@@ -243,7 +243,7 @@ class WFilesManager(SoundFilesManager):
         # sort files by date
         argsort = np.argsort(self.start_dates)
         self.start_dates = self.start_dates[argsort]
-        self.files = [self.FILE_CLASS(v) for v in np.array(vfiles)[argsort]]
+        self.files = [self.FILE_CLASS(v, skip_data=True) for v in np.array(vfiles)[argsort]]
 
 def make_manager(path, kwargs=None):
     """ Looks for the extension of the files in the given directory and returns the correct files manager.

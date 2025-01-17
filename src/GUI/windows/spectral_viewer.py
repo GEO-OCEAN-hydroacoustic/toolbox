@@ -142,7 +142,8 @@ class SpectralViewerWindow(QMainWindow):
                 station = None
                 # check if the station is registered in the dataset
                 split = directory.split("/")
-                s_year, s_name = int(split[-3]), split[-2]
+                split = list(filter(str,split))  # remove empty members if the path ends with "/"
+                s_year, s_name = int(split[-2]), split[-1]
                 st = self.stations.by_name(s_name).by_starting_year(s_year)
                 if len(st) > 0:
                     station = st[0]
