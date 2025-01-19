@@ -10,7 +10,7 @@ from tqdm import tqdm
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool
 
-from src.utils.data_reading.sound_data.sound_file import SoundFile, WavFile, DatFile, WFile
+from utils.data_reading.sound_data.sound_file import SoundFile, WavFile, DatFile, WFile
 
 # epsilon to compare two close datetimes
 TIMEDELTA_EPSILON = datetime.timedelta(milliseconds=10)
@@ -188,6 +188,23 @@ class WavFilesManager(SoundFilesManager):
     """ Class accounting for .wav files.
     """
     FILE_CLASS = WavFile
+
+    def _process_kwargs(self, kwargs):
+        """ Initilize sensitivity.
+        :param kwargs: Dict of additional arguments.
+        :return: None.
+        """
+        self.sensitivity = float(kwargs["sensitivity"]) \
+            if kwargs is not None and "sensitivity" in kwargs else -163.5  # default
+
+    def _initialize_sound_file(self, path, skip_data=True, file_number=None):
+        """ Read a file and return the corresponding SoundFile instance.
+        :param path: Path of the file to load.
+        :param skip_data: If True, only read metadata.
+        :param file_number: Number of the file to use as ID.
+        :return: The SoundFile instance.
+        """
+        return self.FILE_CLASS(path, self.sensitivity, skip_data=skip_data, identifier=file_number)
 
 class DatFilesManager(SoundFilesManager):
     """ Class accounting for .dat files specific of GEO-OCEAN lab.
