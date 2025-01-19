@@ -248,8 +248,8 @@ class WFilesManager(SoundFilesManager):
                 lines = f.readlines()
             lines = [line.split() for line in lines]
             paths = ["/".join(file.split("/")[:-2])+"/"+line[16] for line in lines]
-            starts = [datetime.datetime.fromtimestamp(float(line[2])) for line in lines]
-            ends = [datetime.datetime.fromtimestamp(float(line[6])) for line in lines]
+            starts = [datetime.datetime.utcfromtimestamp(float(line[2])) for line in lines]
+            ends = [datetime.datetime.utcfromtimestamp(float(line[6])) for line in lines]
             indexes_start = [int(line[17])//4 for line in lines]
             indexes_end = indexes_start[1:] + [None]
             sfs = [float(line[8]) for line in lines]
