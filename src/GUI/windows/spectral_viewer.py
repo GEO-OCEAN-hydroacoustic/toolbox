@@ -16,8 +16,10 @@ from skimage.transform import resize
 from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
-from utils.physics.sound_model.spherical_sound_model import HomogeneousSoundModel as SoundModel
+from utils.physics.sound_model.spherical_sound_model import HomogeneousSphericalSoundModel as SoundModel
 from utils.detection.TiSSNet import TiSSNet
+from utils.physics.sound_model.spherical_sound_model import GridSphericalSoundModel as GridSoundModel
+
 
 MIN_SPECTRAL_VIEW_HEIGHT = 200
 DELTA_VIEW_S = 200
@@ -42,7 +44,8 @@ class SpectralViewerWindow(QMainWindow):
         self.loc_res_path = loc_res_path
 
         super().__init__()
-        self.sound_model = SoundModel()
+        self.sound_model = SoundModel(sound_speed=1485.5)
+        self.sound_model = GridSoundModel([f"../../data/sound_model/min-velocities_month-{i:02d}.nc" for i in range(1, 13)])
         self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
 
         self.setWindowTitle(u"Acoustic viewer")
@@ -263,7 +266,7 @@ class SpectralViewerWindow(QMainWindow):
 
         if self.loc_res_path is not None:
             with open(self.loc_res_path, "a") as f:
-                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{len(detection_times)},{src.cost}')
+                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{time.timestamp()},{len(detection_times)},{src.cost}')
                 for s in self.SpectralViews:
                     if s.focused:
                         name = s.station.name

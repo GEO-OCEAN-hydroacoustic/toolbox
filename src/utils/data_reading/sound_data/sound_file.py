@@ -122,7 +122,7 @@ class WavFile(SoundFile):
     """ Class representing .wav files. We expect wav files to be named with their start time as YYYYMMDD_hhmmss.
     """
     EXTENSION = "wav"
-    TO_VOLT = 5.0 / 2 ** 32 # we consider a fixed dynamic range of 5V on 32 bits
+    TO_VOLT = 0.919
 
     def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
         """ Constructor reading file metadata and content if required.
@@ -160,8 +160,10 @@ class WavFile(SoundFile):
         """
         file = sf.SoundFile(self.path)
         file.seek(offset_points_start if offset_points_start else 0)
-        data = file.read(points_to_keep if points_to_keep else -1, dtype='int32')
-        data = data * (self.TO_VOLT / 10 ** (self.sensitivity / 20))
+        data = file.read(points_to_keep if points_to_keep else -1, dtype='float32')
+
+        data = data * (self.TO_VOLT / 10 ** ((self.sensitivity -1) / 20))
+
         return data
 
 
