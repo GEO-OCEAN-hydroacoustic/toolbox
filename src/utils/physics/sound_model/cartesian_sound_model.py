@@ -3,7 +3,7 @@ import numpy as np
 
 
 # sound model of homogeneous sound velocity considering earth as a plane
-class HomogeneousSoundModel(SoundModel):
+class HomogeneousCartesianSoundModel(SoundModel):
     # sound speed in m/s
     def __init__(self, sound_speed=1480):
         super().__init__()
@@ -44,12 +44,11 @@ class HomogeneousSoundModel(SoundModel):
             return mat
         return jacobian
 
-    def _get_sound_travel_time(self, pos1, pos2, date=None):
-        c = self.sound_speed
+    def _get_sound_travel_time(self, pos1, pos2, date=None, velocity=None):
         x, y = pos1[0], pos1[1]
         xi, yi = pos2[0], pos2[1]
         di = np.sqrt((x - xi) ** 2 + (y - yi) ** 2)
-        return di / c
+        return di / velocity
 
     # deg to m
     def _transform_coordinates(self, pos):
@@ -71,8 +70,5 @@ class HomogeneousSoundModel(SoundModel):
             new_pos /= 111_000
         return new_pos
 
-    def localize_common_source(self, sensors_positions, detection_times, x_min=-90, y_min=-180, x_max=90,
-                             y_max=180, t_min=-36_000, initial_pos=None, velocities=None):
-        velocities = len(sensors_positions) * [self.sound_speed]
-        return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
-                             y_max, t_min, initial_pos, velocities)
+    def get_sound_speed(self, source, sensor, date=None):
+        return self.sound_speed

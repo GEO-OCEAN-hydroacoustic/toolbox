@@ -232,7 +232,7 @@ class SpectralView(QtWidgets.QWidget):
         if self.start != start or self.end != end:
             self.start, self.end = start, end
             self.data = self.manager.get_segment(start, end)
-            (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.5342, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
+            (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
 
             # label the time axis from -delta to +delta
             extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
