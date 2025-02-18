@@ -1,6 +1,7 @@
 import datetime
 
 import numpy as np
+import pandas as pd
 import yaml
 
 from utils.data_reading.sound_data.sound_file_manager import make_manager
@@ -192,6 +193,18 @@ class StationsCatalog():
             if st.date_start is not None:
                 res.add_station(st)
         return res
+
+    def to_dataframe(self):
+        df = pd.DataFrame(columns=["station"])
+        for i, station in enumerate(self.stations):
+            df.loc[i] = [station.name, station.lat, station.lon]
+        return df
+
+    def get_coordinate_list(self):
+        res = []
+        for station in self.stations:
+            res.append((station.lat, station.lon))
+        return np.array(res)
 
     def __getitem__(self, number):
         return self.stations[number]

@@ -149,7 +149,10 @@ class WavFile(SoundFile):
         file_name = self.path.split("/")[-1][:-4]  # get the name of the file and get rid of extension
 
         # example : 24-02-22_000011.128000_acq.wav
-        self.header["start_date"] = datetime.datetime.strptime("20"+file_name, "%Y-%m-%d_%H%M%S.%f_acq")
+        if "acq" in file_name:
+            self.header["start_date"] = datetime.datetime.strptime("20"+file_name, "%Y-%m-%d_%H%M%S.%f_acq")
+        else:
+            self.header["start_date"] = datetime.datetime.strptime(file_name, "%Y%m%d_%H%M%S")
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
 
     def _read_data_subpart_uncached(self, offset_points_start, points_to_keep):
