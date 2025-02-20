@@ -238,8 +238,20 @@ class SpectralView(QtWidgets.QWidget):
             extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
             self.mpl.axes.cla()
             self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="inferno")
+            self.mpl.axes.axvline(0, color="w", alpha=0.25, linestyle="--")
             self.mpl.axes.set_xlabel('t (s)')
             self.mpl.axes.set_ylabel('f (Hz)')
+
+            # get previously picked events
+            if self.station in self.spectralViewer.loc_res:
+                l = self.spectralViewer.loc_res[self.station]
+                idx = np.searchsorted(l, self.start, side="left") - 1
+                idx = max(idx, 0)
+                while idx < len(l) and l[idx] < self.end:
+                    if l[idx] > self.start:
+                        t = (l[idx] - (self.start + delta)).total_seconds()
+                        self.mpl.axes.axvline(t, color="bisque", alpha=0.5, linestyle="--")
+                    idx += 1
 
     def _draw(self):
         """ Update the plot widget.
@@ -314,9 +326,8 @@ class SpectralView(QtWidgets.QWidget):
 
             # write a temporary file
             to_write = np.int16(32767 * data / np.max(np.abs(data)))
-            scipy.io.wavfile.write("./temp_audio.wav", int(self.manager.sampling_f * 20), to_write)
-            playsound("./temp_audio.wav")
-            # delete the temporary file
+            scipy.io.wavfile.write("../../data/GUI/temp_audio.wav", int(self.manager.sampling_f * 20), to_write)
+            playsound("../../data/GUI/temp_audio.wav")
 
         elif key.key == "up":
             # increase min and max allowed frequency, respecting the limit of the Nyquist-Shannon frequency

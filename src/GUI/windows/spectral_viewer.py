@@ -1,4 +1,5 @@
 import datetime
+from pathlib import Path
 
 import glob2
 import numpy as np
@@ -40,6 +41,8 @@ class SpectralViewerWindow(QMainWindow):
             self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
 
         self.events_path = events_path
+        self.loc_res = {}  # contains the pick dates of the events located with the tool
+
 
         self.loc_res_path = loc_res_path
 
@@ -47,6 +50,21 @@ class SpectralViewerWindow(QMainWindow):
         self.sound_model = SoundModel(sound_speed=1485.5)
         self.sound_model = GridSoundModel([f"../../data/sound_model/min-velocities_month-{i:02d}.nc" for i in range(1, 13)])
         self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
+
+        # load previously located events and link each pick to its station
+        if Path(self.loc_res_path).exists():
+            with open(self.loc_res_path, "r") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip().split(",")
+                if len(line) == 0:
+                    continue
+                for sname, date in [line[i:i+2] for i in range(6, len(line)-1, 2)]:
+                    date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
+                    s = self.stations.by_name(sname).by_date(date)[0]
+                    self.loc_res.setdefault(s, []).append(date)
+            for s in self.loc_res.keys():
+                self.loc_res[s] = sorted(self.loc_res[s])
 
         self.setWindowTitle(u"Acoustic viewer")
 
@@ -273,4 +291,6 @@ class SpectralViewerWindow(QMainWindow):
                         pick_time = Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
                                                     s.segment_date_dateTimeEdit.time())
                         f.write(f',{name},{pick_time.strftime("%Y%m%d_%H%M%S")}')
+                        self.loc_res.setdefault(s, []).append(pick_time)
+                        self.loc_res[s] = sorted(self.loc_res[s])
                 f.write("\n")
