@@ -39,52 +39,79 @@ def update_valid_grid(current_association, current_valid_grid, new_station, new_
                                                              grid_station_couple_travel_time, grid_tolerance)
         valid_grids.append(valid_grid_new)
         difference_grids.append(difference_grid_new)
-        current_valid_grid = valid_grids[-1]
-    grid = current_valid_grid
+        current_valid_grid = valid_grids[-1] if save_path is None else current_valid_grid
+    grid = np.all(valid_grids, axis=0) if save_path is not None else current_valid_grid
 
-    if save_path is not None:
-        res = '_'.join([f'{len(current_association)}_{s.name}-{date.strftime("%Y%m%d_%H%M%S")}' for s, date in current_association.items()])
+    if save_path is not None and np.count_nonzero(~np.isnan(difference_grid := np.max(difference_grids, axis=0))) > 0:
+        res = '_'.join([f'{s.name}-{date.strftime("%Y%m%d_%H%M%S")}' for s, date in current_association.items()])
         save_path_grid = f'{save_path}/{res}_{new_station.name}-{new_date.strftime("%Y%m%d_%H%M%S")}.png'
 
-        plt.figure()
-        difference_grid = np.max(difference_grids, axis=0)
+        fig, ax = plt.subplots()
+
         extent = (lon_bounds[0], lon_bounds[-1], lat_bounds[0], lat_bounds[-1])
-        plt.imshow(difference_grid[::-1], cmap="inferno", extent=extent, interpolation=None)
+        im = ax.imshow(difference_grid[::-1], cmap="inferno", extent=extent, interpolation=None, vmin=0,
+                       vmax=10*grid_tolerance)
         for s in current_association.keys():
-            plt.plot(s.get_pos()[1], s.get_pos()[0], 'rx')
-        plt.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx')
-        plt.colorbar()
+            ax.plot(s.get_pos()[1], s.get_pos()[0], 'rx')
+            ax.annotate(s.name, xy=(s.get_pos()[1], s.get_pos()[0]), textcoords="data", color='r')
+        ax.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx')
+        ax.annotate(new_station.name, xy=(new_station.get_pos()[1], new_station.get_pos()[0]), textcoords="data",
+                    color='r')
+
+        fig.colorbar(im, orientation='vertical')
+        plt.tight_layout()
         plt.savefig(save_path_grid)
         plt.close()
-
     return grid, difference_grids
 
-# given a list of possible detections for each station and some "anchors" (detections considered in the current
-# association), update the list of possible detections for stations_to_update
-def update_candidates(current_candidates, stations_to_update, anchors, detections, station_max_travel_time,
-                      generic_tolerance, deep_copy=True):
-    if current_candidates is None:
-        candidates_new = {}
-    elif deep_copy:
-        candidates_new = copy.deepcopy(current_candidates)
-    else:
-        candidates_new = current_candidates
+# given an association and a new detection, update the grid of possible source locations
+def update_valid_grid_gt(current_association, current_valid_grid, new_station, new_date, grid_station_couple_travel_time,
+                      grid_tolerance, save_path=None, lon_bounds=None, lat_bounds=None, gt=None):
+    difference_grids, valid_grids = [], []
+    for si, datei in current_association.items():
+        difference_grid_new, valid_grid_new = get_valid_grid(si, new_station, datei, new_date, current_valid_grid,
+                                                             grid_station_couple_travel_time, grid_tolerance)
+        valid_grids.append(valid_grid_new)
+        difference_grids.append(difference_grid_new)
+        current_valid_grid = valid_grids[-1] if save_path is None else current_valid_grid
+    grid = np.all(valid_grids, axis=0) if save_path is not None else current_valid_grid
+
+    if save_path is not None and np.count_nonzero(~np.isnan(difference_grid := np.max(difference_grids, axis=0))) > 0:
+        res = '_'.join([f'{s.name}-{date.strftime("%Y%m%d_%H%M%S")}' for s, date in current_association.items()])
+        save_path_grid = f'{save_path}_{res}_{new_station.name}-{new_date.strftime("%Y%m%d_%H%M%S")}.png'
+
+        fig, ax = plt.subplots()
+
+        extent = (lon_bounds[0], lon_bounds[-1], lat_bounds[0], lat_bounds[-1])
+        im = ax.imshow(difference_grid[::-1], cmap="inferno", extent=extent, interpolation=None, vmin=0,
+                       vmax=10*grid_tolerance)
+        for s in current_association.keys():
+            ax.plot(s.get_pos()[1], s.get_pos()[0], 'rx')
+            ax.annotate(s.name, xy=(s.get_pos()[1], s.get_pos()[0]), textcoords="data", color='r')
+        ax.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx')
+        ax.annotate(new_station.name, xy=(new_station.get_pos()[1], new_station.get_pos()[0]), textcoords="data",
+                    color='r')
+        ax.plot(gt[1], gt[0], 'o', color="bisque")
+        fig.colorbar(im, orientation='vertical')
+        plt.tight_layout()
+        plt.savefig(save_path_grid)
+        plt.close()
+    return grid, difference_grids
+
+def compute_candidates(stations_to_update, current_association, detections, station_max_travel_time, generic_tolerance):
+    candidates = {}
 
     for s in stations_to_update:
-        c = [set(candidates_new[s])] if s in candidates_new else []
-        for station_anchor, date_anchor in anchors:
+        c = []
+        for station_anchor, date_anchor in current_association.items():
             c.append(set(find_detections(detections[s][:,0], date_anchor, to_tdelta(station_max_travel_time[s][station_anchor]) + to_tdelta(generic_tolerance))))
-        candidates_new[s] = list(set.intersection(*c))
-    return candidates_new
+        candidates[s] = list(set.intersection(*c))
+    return candidates
 
 # check if the association is valid (if it was never seen) and save it in results
-def update_results(date1, current_association, valid_points, association_hashlist, results,
+def update_results(date1, current_association, valid_points, results,
                    grid_station_couple_travel_time, compute_costs=False):
     res = np.array([[s, d] for s, d in current_association.items()])
-    s = np.sum([int(d.timestamp() * 1_000) for d in res[:, 1]])
-    if s in association_hashlist:
-        return False
-    association_hashlist.add(s)
     res = res[np.argsort(res[:, 1])]
 
     if compute_costs:
@@ -99,7 +126,6 @@ def update_results(date1, current_association, valid_points, association_hashlis
         valid_points = valid_points_2
 
     results.setdefault(date1, []).append((res, np.array(valid_points)))
-    return True
 
 # check if the association was never seen
 def association_is_new(association, new_date, association_hashlist):
@@ -107,4 +133,5 @@ def association_is_new(association, new_date, association_hashlist):
     s = np.sum([int(d.timestamp() * 1_000) for d in res])
     if s in association_hashlist:
         return False
+    association_hashlist.add(s)
     return True
