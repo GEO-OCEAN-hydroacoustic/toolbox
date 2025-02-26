@@ -252,6 +252,15 @@ class SpectralView(QtWidgets.QWidget):
                         t = (l[idx] - (self.start + delta)).total_seconds()
                         self.mpl.axes.axvline(t, color="bisque", alpha=0.5, linestyle="--")
                     idx += 1
+            if self.station in self.spectralViewer.loc_res_single:
+                l = self.spectralViewer.loc_res_single[self.station]
+                idx = np.searchsorted(l, self.start, side="left") - 1
+                idx = max(idx, 0)
+                while idx < len(l) and l[idx] < self.end:
+                    if l[idx] > self.start:
+                        t = (l[idx] - (self.start + delta)).total_seconds()
+                        self.mpl.axes.axvline(t, color="yellow", alpha=0.25, linestyle="--")
+                    idx += 1
 
     def _draw(self):
         """ Update the plot widget.
@@ -289,6 +298,10 @@ class SpectralView(QtWidgets.QWidget):
                             f.write(f'{name},{click_time.strftime("%Y%m%d_%H%M%S")},{center_time.strftime("%Y%m%d_%H%M%S")}')
                         else:
                             f.write(f'{name},{click_time.strftime("%Y%m%d_%H%M%S")}')
+                        self.spectralViewer.loc_res_single.setdefault(self.station, []).append(click_time)
+                        self.spectralViewer.loc_res_single[self.station] = sorted(self.spectralViewer.loc_res_single[self.station])
+                        self.mpl.axes.axvline(click.xdata, color="yellow", alpha=0.25, linestyle="--")
+                        self.mpl.draw()
                         f.write("\n")
 
     def on_key(self, key):

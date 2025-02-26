@@ -42,6 +42,7 @@ class SpectralViewerWindow(QMainWindow):
 
         self.events_path = events_path
         self.loc_res = {}  # contains the pick dates of the events located with the tool
+        self.loc_res_single = {}  # contains the pick dates of the previous single-station picks
 
 
         self.loc_res_path = loc_res_path
@@ -65,6 +66,22 @@ class SpectralViewerWindow(QMainWindow):
                     self.loc_res.setdefault(s, []).append(date)
             for s in self.loc_res.keys():
                 self.loc_res[s] = sorted(self.loc_res[s])
+        single_path = self.loc_res_path[:-4] + "_Pn.csv"
+        if Path(single_path).exists():
+            with open(single_path, "r") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip().split(",")
+                if len(line) == 0:
+                    continue
+                date = datetime.datetime.strptime(line[1], "%Y%m%d_%H%M%S")
+                s = self.stations.by_name(line[0]).by_date(date)
+                if len(s)==0:
+                    print(f"Unable to find station {line[0]} active at {line[1]}")
+                s = s[0]
+                self.loc_res_single.setdefault(s, []).append(date)
+            for s in self.loc_res_single.keys():
+                self.loc_res_single[s] = sorted(self.loc_res_single[s])
 
         self.setWindowTitle(u"Acoustic viewer")
 
@@ -291,6 +308,6 @@ class SpectralViewerWindow(QMainWindow):
                         pick_time = Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
                                                     s.segment_date_dateTimeEdit.time())
                         f.write(f',{name},{pick_time.strftime("%Y%m%d_%H%M%S")}')
-                        self.loc_res.setdefault(s, []).append(pick_time)
-                        self.loc_res[s] = sorted(self.loc_res[s])
+                        self.loc_res.setdefault(s.station, []).append(pick_time)
+                        self.loc_res[s.station] = sorted(self.loc_res[s.station])
                 f.write("\n")
