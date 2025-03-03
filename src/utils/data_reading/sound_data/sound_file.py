@@ -98,10 +98,11 @@ class SoundFile:
             # select the data ending before end
             keep = end - (max(start, self.header["start_date"]) if start else self.header["start_date"])
             points_to_keep = int(keep.total_seconds() * self.header["sampling_frequency"])
-            max_possible_length = self.header["samples"] - offset_points_start if offset_points_start else self.header["samples"]
+            max_possible_length = self.header["samples"] - offset_points_start if offset_points_start else self.header[
+                "samples"]
             points_to_keep = None if points_to_keep > max_possible_length else points_to_keep
 
-        if points_to_keep is not None and points_to_keep<0:
+        if points_to_keep is not None and points_to_keep < 0:
             return []
 
         data = self.read_data_subpart(offset_points_start, points_to_keep)
@@ -117,6 +118,7 @@ class SoundFile:
         if type(other) == type(self):  # the other object is a SoundFile that may have the same identifier
             return self.identifier == other.identifier
         return False
+
 
 class WavFile(SoundFile):
     """ Class representing .wav files. We expect wav files to be named with their start time as YYYYMMDD_hhmmss.
@@ -158,7 +160,7 @@ class DatFile(SoundFile):
     EXTENSION = "DAT"
     TO_VOLT = 5.0 / 2 ** 24  # we consider a fixed dynamic range of 5V on 24 bits
 
-    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw = False):
+    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw=False):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
         :param sensitivity: Sensibility of the sensor.
@@ -182,7 +184,7 @@ class DatFile(SoundFile):
         file_header = file_header.decode('ascii').split("\n")
 
         self.header["site"] = file_header[3].split()[1]
-        self.header["bytes_per_sample"] = int(re.findall('(\d*)\s*[bB]', file_header[6])[0])
+        self.header["bytes_per_sample"] = int(re.findall(r'(\d*)\s*[bB]', file_header[6])[0])
         self.header["samples"] = int(int(file_header[7].split()[1]))
         self.header["sampling_frequency"] = float(file_header[5].split()[1])
         self._original_samples = int(file_header[7].split()[1])
@@ -192,14 +194,15 @@ class DatFile(SoundFile):
         if self.raw:
             #str start date is not correct in raw data since it comes from user computer used to start recording
             cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+            offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
             gps_zero = ' '.join(file_header[8].split()[-4:])
             locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
             if "." in gps_zero:
-                gps_zero= datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S.%f %Y")
-            else :
+                gps_zero = datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S.%f %Y")
+            else:
                 gps_zero = datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S %Y")
-            self.header["start_date"] = gps_zero + datetime.timedelta(microseconds=cycle)
-        else :
+            self.header["start_date"] = gps_zero + datetime.timedelta(microseconds=cycle)+datetime.timedelta(days=offset)
+        else:
             # 9 is 1st sample, 10 is start date
             date = file_header[10].split()
             date = ' '.join(date[-4:])
@@ -247,6 +250,7 @@ class DatFile(SoundFile):
         # now convert data to meaningful data
         return data
 
+
 class WFile(SoundFile):
     """ Class representing a record from a .w file specific of CTBTO's IMS.
     Virtually, we represent 1 record (1 line of a .wfdisc) by 1 instance of this class.
@@ -281,7 +285,7 @@ class WFile(SoundFile):
             to_read = points_to_keep if points_to_keep else \
                 self.header["end_index"] - start_idx if self.header["end_index"] else -1
             file.seek(start_idx * self.header["bytes_per_sample"])
-            data = file.read(-1 if to_read<0 else to_read * self.header["bytes_per_sample"])
+            data = file.read(-1 if to_read < 0 else to_read * self.header["bytes_per_sample"])
         data = np.frombuffer(data, dtype=">u4")
 
         # now convert data to meaningful data
