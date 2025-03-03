@@ -158,7 +158,7 @@ class DatFile(SoundFile):
     EXTENSION = "DAT"
     TO_VOLT = 5.0 / 2 ** 24  # we consider a fixed dynamic range of 5V on 24 bits
 
-    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
+    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw = False):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
         :param sensitivity: Sensibility of the sensor.
@@ -167,6 +167,9 @@ class DatFile(SoundFile):
         path is used.
         """
         self.sensitivity = sensitivity
+        self.raw = raw
+        if "raw" in path:
+            self.raw = True
         super().__init__(path, skip_data, identifier)
 
     def _read_header(self):
@@ -186,15 +189,27 @@ class DatFile(SoundFile):
         duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
         self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
 
-        # 9 is 1st sample, 10 is start date
-        date = file_header[10].split()
-        date = ' '.join(date[-4:])
-        locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
-        if "." in date:
-            self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S.%f %Y")
-        else:
-            # handle the case where no decimal is present
-            self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S %Y")
+        if self.raw:
+            #str start date is not correct in raw data since it comes from user computer used to start recording
+            cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+            gps_zero = ' '.join(file_header[8].split()[-4:])
+            locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
+            if "." in gps_zero:
+                gps_zero= datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S.%f %Y")
+            else :
+                gps_zero = datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S %Y")
+            self.header["start_date"] = gps_zero + datetime.timedelta(microseconds=cycle)
+        else :
+            # 9 is 1st sample, 10 is start date
+            date = file_header[10].split()
+            date = ' '.join(date[-4:])
+            locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
+            if "." in date:
+                self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S.%f %Y")
+            else:
+                # handle the case where no decimal is present
+                self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S %Y")
+
         leap = int(get_leap_second(self.header["start_date"]))  # get the current GPS / TAI shift
         self.header["start_date"] -= datetime.timedelta(seconds=leap)
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
