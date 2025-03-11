@@ -11,15 +11,13 @@ from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QScrollArea, QWidget, QI
 from PySide6.QtCore import (Qt)
 from PySide6.QtGui import (QAction)
 from PySide6.QtWidgets import (QMainWindow, QToolBar)
-from numpy.linalg.linalg import LinAlgError
+from numpy.linalg import LinAlgError
 from skimage.transform import resize
 
 from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
-from utils.physics.sound_model.spherical_sound_model import HomogeneousSphericalSoundModel as SoundModel
 from utils.detection.TiSSNet import TiSSNet
-from utils.physics.sound_model.spherical_sound_model import GridSphericalSoundModel as GridSoundModel
 
 
 MIN_SPECTRAL_VIEW_HEIGHT = 200
@@ -27,9 +25,10 @@ DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, database_yaml, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
+    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
         """ Constructor initializing the window and setting its visual appearance.
-        :param database_yaml: YAML file containing information about the available stations.
+        :param datasets_csv: csv file containing information about the available stations.
+        :param sound_model: Sound model used to predict travel time and to locate events.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         :param events_path: Path of a yaml file describing some events.
         :param loc_res_path: Path of file where the localization results will be written.
@@ -40,6 +39,8 @@ class SpectralViewerWindow(QMainWindow):
             self.detection_model = TiSSNet()
             self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
 
+        self.sound_model = sound_model
+
         self.events_path = events_path
         self.loc_res = {}  # contains the pick dates of the events located with the tool
         self.loc_res_single = {}  # contains the pick dates of the previous single-station picks
@@ -48,9 +49,8 @@ class SpectralViewerWindow(QMainWindow):
         self.loc_res_path = loc_res_path
 
         super().__init__()
-        self.sound_model = SoundModel(sound_speed=1485.5)
-        self.sound_model = GridSoundModel([f"../../data/sound_model/min-velocities_month-{i:02d}.nc" for i in range(1, 13)])
-        self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
+        self.stations = StationsCatalog(datasets_csv).filter_out_undated().filter_out_unlocated()
+        print(f"{len(self.stations)} stations found from csv file")
 
         # load previously located events and link each pick to its station
         if Path(self.loc_res_path).exists():
@@ -181,9 +181,9 @@ class SpectralViewerWindow(QMainWindow):
                 # check if the station is registered in the dataset
                 split = directory.split("/")
                 split = list(filter(str,split))  # remove empty members if the path ends with "/"
-                s_year, s_name = int(split[-2]), split[-1]
-                st = self.stations.by_name(s_name).by_starting_year(s_year)
-                if len(st) > 0:
+                s_dataset, s_name = split[-2], split[-1]
+                st = self.stations.by_name(s_name).by_dataset(s_dataset)
+                if len(st) == 1:
                     station = st[0]
                     print(f"Station {st[0]} recognized")
                 station = station or Station(directory, initialize_metadata=True)

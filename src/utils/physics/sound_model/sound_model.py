@@ -42,16 +42,18 @@ class SoundModel():
         return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
                              y_max, t_min, initial_pos, velocities)
 
+    def _define_x0(self, x0, sensors_positions, detection_times, idx):
+        if x0 is None:
+            x0 = [None] + list(np.mean(sensors_positions, axis=0))
+            x0[0] = -1 * self.get_sound_travel_time(x0[1:], sensors_positions[idx], detection_times[idx])
+        return x0
 
     def _localize_common_source(self, sensors_positions, detection_times, x_min=-90, y_min=-180, x_max=90,
                              y_max=180, t_min=-36_000, initial_pos=None, velocities=None):
 
         min_date = np.argmin(detection_times)
 
-        x0 = [None] + list(np.mean(sensors_positions, axis=0)) or initial_pos
-
-        if x0[0] is None:
-            x0[0] = -1 * self.get_sound_travel_time(x0[1:], sensors_positions[min_date], detection_times[min_date])
+        x0 = self._define_x0(initial_pos, sensors_positions, detection_times, min_date)
 
         if velocities is None:
             velocities = [self.get_sound_speed(x0[1:], p, detection_times[min_date]) for p in sensors_positions]
@@ -89,8 +91,9 @@ class SoundModel():
 
         pos = []
 
+        initial_pos = self._define_x0(initial_pos, sensors_positions, detection_times, min_date)
         if velocities is None:
-            velocities = [self.get_sound_speed(initial_pos, p, detection_times[min_date]) for p in sensors_positions]
+            velocities = [self.get_sound_speed(initial_pos[1:], p, detection_times[min_date]) for p in sensors_positions]
         for i in tqdm(range(N), desc='Monte-Carlo estimation...'):
             picks = [detection_times[j] + datetime.timedelta(seconds=pick_deviations[i,j]) for j in range(len(detection_times))]
             velocities = [velocities[j] + velocity_deviations[i,j] for j in range(len(detection_times))]

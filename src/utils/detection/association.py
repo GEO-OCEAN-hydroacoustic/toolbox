@@ -1,4 +1,6 @@
 import copy
+import pickle
+from pathlib import Path
 
 import numpy as np
 import datetime
@@ -135,3 +137,82 @@ def association_is_new(association, new_date, association_hashlist):
         return False
     association_hashlist.add(s)
     return True
+
+def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0.1, min_p_tissnet_secondary=0.1,
+                    merge_delta=datetime.timedelta(seconds=5)):
+    detections = {}
+    for det_file in det_files:
+        station_dataset, station_name = det_file[:-4].split("/")[-1].split("_")
+        station = stations.by_dataset(station_dataset).by_name(station_name)
+        if len(station) != 1:
+            print(
+                f"Not finding a single station with dataset {station_dataset} and name {station_name} (query result : {station}).\nSkipping.")
+            continue
+        station = station[0]
+
+        d = []
+        with open(det_file, "rb") as f:
+            while True:
+                try:
+                    d.append(pickle.load(f))
+                except EOFError:
+                    break
+        d = np.array(d)
+        d = d[:, :2]
+        d = d[d[:, 1] > min_p_tissnet_secondary]
+        d = d[np.argsort(d[:, 0])]
+
+        # remove duplicates and regularly spaced signals
+        new_d = [d[0]]
+        for i in range(1, len(d)):
+            # check this event is far enough from the previous one
+            if d[i, 0] - d[i - 1, 0] > merge_delta:
+                # check this event is not part of a series of regularly spaced events (which probably means we encounter seismic airgun shots)
+                if i < 3 or abs((d[i, 0] - d[i - 1, 0]) - (d[i - 1, 0] - d[i - 2, 0])) > merge_delta and abs(
+                        (d[i, 0] - d[i - 2, 0]) - (d[i - 1, 0] - d[i - 3, 0])) > merge_delta:
+                    new_d.append(d[i])
+        d = np.array(new_d)
+
+        detections[station] = d
+
+        print(f"Found {len(d)} detections for station {station}")
+
+        # we keep all detections in a single list, sorted by date, to then browse detections
+    stations = list(detections.keys())
+    detections_merged = np.concatenate([[(det[0], det[1], s) for det in detections[s]] for s in stations])
+    detections_merged = detections_merged[detections_merged[:, 1] > min_p_tissnet_primary]
+    detections_merged = detections_merged[np.argsort(detections_merged[:, 0])]
+
+    Path(f"{detections_dir}/cache/").mkdir(parents=True, exist_ok=True)
+    np.save(f"{detections_dir}/cache/detections.npy", detections)
+    np.save(f"{detections_dir}/cache/detections_merged.npy", detections_merged)
+
+    return detections, detections_merged
+
+def compute_grids(lat_bounds, lon_bounds, grid_size, sound_model, stations,
+                  pick_uncertainty=5, sound_speed_uncertainty=2):
+    pts_lat = np.linspace(lat_bounds[0], lat_bounds[1], grid_size)
+    pts_lon = np.linspace(lon_bounds[0], lon_bounds[1], grid_size)
+
+    grid_max_res_time = (0.5 * np.sqrt(2) * (pts_lat[1] - pts_lat[0]) * 111_000) / (
+                sound_model.sound_speed - sound_speed_uncertainty)
+    grid_tolerance = grid_max_res_time + pick_uncertainty
+    print(f"Grid tolerance of {grid_tolerance:.2f}s")
+
+    grid_station_travel_time = {s: np.zeros((len(pts_lat), len(pts_lon))) for s in stations}
+    for s in stations:
+        for ilat, lat in enumerate(pts_lat):
+            for ilon, lon in enumerate(pts_lon):
+                grid_station_travel_time[s][ilat, ilon] = sound_model.get_sound_travel_time([lat, lon], s.get_pos())
+
+    grid_station_couple_travel_time = {s: {s2: np.zeros((len(pts_lat), len(pts_lon))) for s2 in stations} for s in
+                                       stations}
+    for s in stations:
+        for s2 in stations:
+            grid_station_couple_travel_time[s][s2] = grid_station_travel_time[s2] - grid_station_travel_time[s]
+
+    station_max_travel_time = {s: {s2: sound_model.get_sound_travel_time(s.get_pos(), s2.get_pos()) for s2 in stations}
+                               for s in stations}
+
+    return (pts_lat, pts_lon, station_max_travel_time, grid_station_travel_time,
+            grid_station_couple_travel_time, grid_tolerance)

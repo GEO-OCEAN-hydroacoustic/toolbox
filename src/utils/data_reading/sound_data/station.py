@@ -1,5 +1,8 @@
 import datetime
+import itertools
+from pathlib import Path
 
+import glob2
 import numpy as np
 import pandas as pd
 import yaml
@@ -53,7 +56,7 @@ class Station:
                        other_kwargs=self.other_kwargs)
 
     def __str__(self):
-        return f"station_{self.dataset}_{self.name}_{self.date_start.year}"
+        return f"{self.dataset}_{self.name}"
 
     def __repr__(self):
         return self.__str__()
@@ -66,11 +69,22 @@ class Station:
         return hash((self.name, self.lat, self.lon, self.date_start, self.date_end))
 
 class StationsCatalog():
-    def __init__(self, yaml_file=None):
+    def __init__(self, file=None, depth=0, max_depth=3):
         self.stations = []
 
-        if yaml_file:
-            self.load_yaml(yaml_file)
+        # if a file was given, and it is a .yaml or .csv, read it
+        # otherwise, if it is a directory, recursively try to find .yaml or .csv files
+        if file:
+            if ".yaml" in file:
+                self.load_yaml(file)
+            elif ".csv" in file:
+                self.load_csv(file)
+            if Path(file).is_dir():
+                if depth < max_depth:
+                    catalogs = []
+                    for path in glob2.glob(f"{file}/*"):
+                        catalogs.append(StationsCatalog(path, depth+1, max_depth))
+                    self.stations = list(itertools.chain.from_iterable(catalogs))
 
     def load_yaml(self, yaml_file):
         with open(yaml_file, "r") as f:
@@ -98,6 +112,29 @@ class StationsCatalog():
                 st = Station(f"{path}/{station_name}", station_name, lat, lon, date_start, date_end, dataset,
                              other_kwargs=station_yaml)
                 self.stations.append(st)
+
+    def load_csv(self, csv_file):
+        data = pd.read_csv(csv_file, parse_dates=["date_start", "date_end"])
+        parent_path = Path(csv_file).parent
+
+        for i in data.index:
+            path = parent_path / data.loc[i]["dataset"] / data.loc[i]["station_name"]
+            data.loc[i, "path"] = str(path)
+
+            start = data.loc[i]["date_start"].to_pydatetime()
+            end = data.loc[i]["date_end"].to_pydatetime()
+
+            start = None if pd.isnull(start) else start
+            end = None if pd.isnull(end) else end
+
+            # kwargs is used to transfer other information, e.g. sensibility
+            kwargs = {c:data.loc[i][c] for c in data.columns}
+
+            st = Station(data.loc[i]["path"], data.loc[i]["station_name"],
+                         data.loc[i]["lat"], data.loc[i]["lon"],
+                         start, end, data.loc[i]["dataset"],
+                         other_kwargs=kwargs)
+            self.stations.append(st)
 
     def add_station(self, station):
         self.stations.append(station)

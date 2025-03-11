@@ -1,3 +1,5 @@
+import numpy as np
+import torch
 from torch import nn
 
 class TiSSNet(nn.Module):
@@ -51,3 +53,14 @@ class TiSSNet(nn.Module):
 
     def forward(self, x):
         return self.layers(x)
+
+
+def process_batch(batch, device, model):
+    try:
+        batch = np.array(batch)
+    except:
+        print("the array is not rectangular")
+    batch = torch.from_numpy(batch).to(device)
+    with torch.no_grad():
+        res = model(batch).cpu().numpy()
+    return res

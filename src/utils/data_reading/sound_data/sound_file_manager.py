@@ -181,7 +181,7 @@ class SoundFilesManager:
         """ Basic display of sound file manager.
         :return: A string representation of the manager.
         """
-        res = f"File manager of station {self.name} of type {self.__class__.__name__}"
+        res = f"{self.name}"
         return res
 
 class WavFilesManager(SoundFilesManager):
