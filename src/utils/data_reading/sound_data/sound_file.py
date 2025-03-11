@@ -1,4 +1,5 @@
 import datetime
+import os
 import wave
 
 import numpy as np
@@ -127,7 +128,7 @@ class WavFile(SoundFile):
     def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
-        :param sensitivity: Sensibility of the sensor.
+        :param sensitivity: Sensitivity of the sensor.
         :param skip_data: If True, we only read the metadata of the file. Else, we also read its content.
         :param identifier: The ID of this file, that will be used to compare it with another file. If unspecified,
         path is used.
@@ -179,7 +180,7 @@ class DatFile(SoundFile):
     def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
-        :param sensitivity: Sensibility of the sensor.
+        :param sensitivity: Sensitivity of the sensor.
         :param skip_data: If True, we only read the metadata of the file. Else, we also read its content.
         :param identifier: The ID of this file, that will be used to compare it with another file. If unspecified,
         path is used.
@@ -194,25 +195,42 @@ class DatFile(SoundFile):
         with open(self.path, 'rb') as file:
             file_header = file.read(400)
 
-        file_header = file_header.decode('ascii').split("\n")
+        file_header = file_header.decode('utf-8').split("\n")
 
-        self.header["site"] = file_header[3].split()[1]
-        self.header["bytes_per_sample"] = int(re.findall('(\d*)\s*[bB]', file_header[6])[0])
-        self.header["samples"] = int(int(file_header[7].split()[1]))
-        self.header["sampling_frequency"] = float(file_header[5].split()[1])
-        self._original_samples = int(file_header[7].split()[1])
-        duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
-        self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
+        if len(file_header) > 9:
+            self.header["site"] = file_header[3].split()[1]
+            self.header["bytes_per_sample"] = int(re.findall('(\d*)\s*[bB]', file_header[6])[0])
+            self.header["samples"] = int(int(file_header[7].split()[1]))
+            self.header["sampling_frequency"] = float(file_header[5].split()[1])
+            self._original_samples = int(file_header[7].split()[1])
+            duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
+            self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
+            # 9 is 1st sample, 10 is start date
+            date = file_header[10].split()
+        else:  # HYDROBS
+            self.header["site"] = self.path.split("/")[-2]
+            self.header["bytes_per_sample"] = 3
+            self.header["samples"] = int((os.path.getsize(self.path) - 400) / 3)
+            self.header["sampling_frequency"] = 240
+            self.header["duration"] = datetime.timedelta(
+                seconds=self.header["samples"] / self.header["sampling_frequency"])
+            date = file_header[1].split()
 
-        # 9 is 1st sample, 10 is start date
-        date = file_header[10].split()
-        date = ' '.join(date[-4:])
         locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
-        if "." in date:
-            self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S.%f %Y")
+        french_to_en = {"fév": "feb", "avr": "apr", "mai": "may", "jui": "jun", "aoû": "aug", "déc": "dec"}
+        if date[-4] in french_to_en:
+            date[-4] = french_to_en[date[-4]]
+
+        if "." in date[-2]:
+            if len(d := date[-2].split(".")[-1]) < 6:
+                to_add = 6 - len(d)
+                date[-2] += "0" * to_add
+            date_str = ' '.join(date[-4:])
+            self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S.%f %Y")
         else:
             # handle the case where no decimal is present
-            self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S %Y")
+            date_str = ' '.join(date[-4:])
+            self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S %Y")
         leap = int(get_leap_second(self.header["start_date"]))  # get the current GPS / TAI shift
         self.header["start_date"] -= datetime.timedelta(seconds=leap)
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]

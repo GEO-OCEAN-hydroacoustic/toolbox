@@ -269,6 +269,8 @@ def make_manager(path, kwargs=None):
     :return: A FilesManager instance able to load the files of the given directory, or None.
     """
     files = [f.split('.')[-1] for f in os.listdir(path)]
+    if "sensitivity" in kwargs and np.isnan(float(kwargs["sensitivity"])):
+        del kwargs["sensitivity"]
     if WavFile.EXTENSION in files:
         return WavFilesManager(path, kwargs=kwargs)
     if DatFile.EXTENSION in files:

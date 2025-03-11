@@ -27,7 +27,10 @@ class Station:
         self.lat = lat
         self.lon = lon
         self.dataset = dataset
-        self.other_kwargs = other_kwargs
+        self.other_kwargs = {}
+        for k, v in other_kwargs.items():
+            if v != "" and not (isinstance(v, np.float64) and np.isnan(v)):
+                self.other_kwargs[k] = v
         if initialize_metadata:
             self.get_manager()
             self.name = name or self.manager.name
@@ -127,7 +130,7 @@ class StationsCatalog():
             start = None if pd.isnull(start) else start
             end = None if pd.isnull(end) else end
 
-            # kwargs is used to transfer other information, e.g. sensibility
+            # kwargs is used to transfer other information, e.g. sensitivity
             kwargs = {c:data.loc[i][c] for c in data.columns}
 
             st = Station(data.loc[i]["path"], data.loc[i]["station_name"],

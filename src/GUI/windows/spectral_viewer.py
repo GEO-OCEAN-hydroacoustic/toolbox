@@ -301,7 +301,10 @@ class SpectralViewerWindow(QMainWindow):
 
         if self.loc_res_path is not None:
             with open(self.loc_res_path, "a") as f:
-                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{time.timestamp()},{len(detection_times)},{src.cost}')
+                # to obtain a UTC timestamp we need to specify it
+                UTC_datetime = time.replace(tzinfo=datetime.timezone.utc)
+                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{UTC_datetime.timestamp()},'
+                        f'{len(detection_times)},{src.cost}')
                 for s in self.SpectralViews:
                     if s.focused:
                         name = s.station.name
