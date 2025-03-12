@@ -1,5 +1,6 @@
 /data/*
 !/data/requirements.txt
 /src/notebooks/test
+/src/notebooks/local
 /.idea/
 __pycache__
