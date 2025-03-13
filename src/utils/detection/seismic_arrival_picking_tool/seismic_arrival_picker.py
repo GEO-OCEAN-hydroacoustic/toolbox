@@ -277,7 +277,7 @@ class SeismicArrivalPicker(QtWidgets.QMainWindow):
 
             # Add observed_arrival_time column if it doesn't exist
             if 'observed_arrival_time' not in self.catalogue_df.columns:
-                self.catalogue_df['observed_arrival_time'] = self.catalogue_df['arrival_time']
+                self.catalogue_df['observed_arrival_time'] = pd.NaT
 
             # Filter by candidate flag if it exists
             if 'candidate' in self.catalogue_df.columns:
@@ -825,7 +825,7 @@ class SeismicArrivalPicker(QtWidgets.QMainWindow):
             if 'observed_arrival_time' not in save_df.columns:
                 save_df['observed_arrival_time'] = save_df['arrival_time']
 
-            # Update catalogue with observed arrival times
+            # Update catalogue with observed arrival times, but ONLY for phases that were manually adjusted
             for event_key, phases in self.observed_arrivals.items():
                 try:
                     # Convert string key back to datetime
@@ -841,7 +841,9 @@ class SeismicArrivalPicker(QtWidgets.QMainWindow):
                         if not phase_mask.any():
                             continue
 
-                        # Convert relative time (seconds) to absolute time
+                        # Get the predicted time for this phase
+                        phase_arrival_time = save_df.loc[phase_mask, 'arrival_time'].iloc[0]
+
                         # Find the reference time for this event
                         first_arrival = save_df.loc[event_mask, 'arrival_time'].min()
 
@@ -851,15 +853,23 @@ class SeismicArrivalPicker(QtWidgets.QMainWindow):
                         else:
                             reference_time = first_arrival - timedelta(minutes=10)
 
-                        # Calculate absolute time
-                        new_absolute_time = reference_time + timedelta(seconds=rel_time)
+                        # Calculate the predicted time in seconds from reference
+                        if phase_arrival_time.tzinfo is not None:
+                            phase_arrival_time = phase_arrival_time.replace(tzinfo=None)
+                        predicted_time = (phase_arrival_time - reference_time).total_seconds()
 
-                        # If original time had timezone info, add it back
-                        if first_arrival.tzinfo is not None:
-                            new_absolute_time = new_absolute_time.replace(tzinfo=first_arrival.tzinfo)
+                        # Only update if the observed time differs from the predicted time
+                        # This means the cursor was actually moved by the user
+                        if abs(rel_time - predicted_time) > 0.01:  # Small threshold to account for floating point errors
+                            # Calculate absolute time
+                            new_absolute_time = reference_time + timedelta(seconds=rel_time)
 
-                        # Update the DataFrame
-                        save_df.loc[phase_mask, 'observed_arrival_time'] = new_absolute_time
+                            # If original time had timezone info, add it back
+                            if first_arrival.tzinfo is not None:
+                                new_absolute_time = new_absolute_time.replace(tzinfo=first_arrival.tzinfo)
+
+                            # Update the DataFrame only for this specific phase
+                            save_df.loc[phase_mask, 'observed_arrival_time'] = new_absolute_time
                 except Exception as e:
                     self.statusBar.showMessage(f"Warning: Could not process event {event_key}: {str(e)}")
 
