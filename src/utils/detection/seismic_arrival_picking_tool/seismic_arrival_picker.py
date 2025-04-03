@@ -333,7 +333,7 @@ class SeismicArrivalPicker(QtWidgets.QMainWindow):
             self.statusBar.showMessage(f"Loading waveform data for event at {event_time}...")
 
             # Create DatFilesManager and get waveform segment
-            manager = DatFilesManager(self.data_path)
+            manager = DatFilesManager(self.data_path, kwargs='raw')
 
             # Get file number
             file_number = manager.find_file_name(self.start_time) if hasattr(manager, 'find_file_name') else "Unknown"
