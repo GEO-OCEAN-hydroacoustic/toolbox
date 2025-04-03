@@ -88,7 +88,7 @@ class SeismicDataManager:
 
         # Update both predicted and observed times
         self.catalogue.loc[mask, 'predicted_arrival_time'] = predicted_time
-        self.catalogue.loc[mask, 'observed_arrival_time'] = observed_time-600
+        self.catalogue.loc[mask, 'observed_arrival_time'] = observed_time
 
         self.processed_events.append((event_time, phase))
     

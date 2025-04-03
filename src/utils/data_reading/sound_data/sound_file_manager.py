@@ -100,7 +100,17 @@ class SoundFilesManager:
         :return: The index of the matching file or None.
         """
         file_starts = [f.header["start_date"] for f in self.files]
-        target_idx = np.searchsorted(file_starts, target_datetime, side="right") - 1
+        target_idx = np.searchsorted(file_starts, target_datetime, side="right")-1
+        target_idx = max(int(target_idx), 0)
+        return target_idx
+
+    def find_file_name(self, target_datetime):
+        """ Find a file containing a given datetime and return its index.
+        :param target_datetime: The datetime we look for.
+        :return: The index of the matching file or None.
+        """
+        file_starts = [f.header["start_date"] for f in self.files]
+        target_idx = np.searchsorted(file_starts, target_datetime, side="right")-1
         target_idx = max(int(target_idx), 0)
         return target_idx
 
@@ -212,6 +222,7 @@ class DatFilesManager(SoundFilesManager):
         :param kwargs: Dict of additional arguments.
         :return: None.
         """
+        self.raw = True if kwargs is not None and "raw" in kwargs else False  # default
         self.sensitivity = float(kwargs["sensitivity"]) \
             if kwargs is not None and "sensitivity" in kwargs else -163.5  # default
 
@@ -222,7 +233,7 @@ class DatFilesManager(SoundFilesManager):
         :param file_number: Number of the file to use as ID.
         :return: The SoundFile instance.
         """
-        return self.FILE_CLASS(path, self.sensitivity, skip_data=skip_data, identifier=file_number)
+        return self.FILE_CLASS(path, self.sensitivity, skip_data=skip_data, identifier=file_number, raw=self.raw)
 
 class WFilesManager(SoundFilesManager):
     """ Class accounting for .w files specific of CTBTO.

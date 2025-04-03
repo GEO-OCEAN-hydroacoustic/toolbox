@@ -187,8 +187,8 @@ def main():
     app = QApplication(sys.argv)
 
     # Paths for the seismic data
-    CATALOGUE_PATH = r'../../../../../data/ELAN_2018_M6.csv'
-    DAT_FILE_PATH = r'F:\OHASISBIO\2018\2018_ELAN_raw'
+    CATALOGUE_PATH = r'../../../../../data/NEIC_at_stations/NEAMS_2018_M6.csv'
+    DAT_FILE_PATH = r'F:\OHASISBIO\2018\2018_NEAMS_raw'
 
     window = SeismicArrivalPickingTool(CATALOGUE_PATH, DAT_FILE_PATH)
     window.show()

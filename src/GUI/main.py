@@ -12,9 +12,9 @@ if __name__ == "__main__":
         "QLabel{font-size: 16pt;} QDateTimeEdit{font-size: 16pt;} QPushButton{font-size: 20pt;} QDoubleSpinBox{font-size: 16pt;}")
 
     # dataset yaml to get more information about the stations ; the file can be empty
-    datasets_yaml = "../../data/demo/dataset.yaml"
+    datasets_yaml = "/home/rsafran/PycharmProjects/toolbox/data/recensement_stations_PY.yaml"
 
-    tissnet_checkpoint = "../../data/models/TiSSNet/torch_save"  # TiSSNet weights for demonstration purpose ; optional
+    tissnet_checkpoint = "/home/rsafran/PycharmProjects/toolbox/data/models/TiSSNet/torch_save"  # TiSSNet weights for demonstration purpose ; optional
     if not Path(tissnet_checkpoint).exists():
         tissnet_checkpoint = None
 

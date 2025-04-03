@@ -6,7 +6,7 @@ import math
 import re
 import locale
 import soundfile as sf
-
+import warnings
 from src.utils.time.GPS import get_leap_second
 from src.utils.transformation.signal import butter_bandpass_filter
 
@@ -170,8 +170,8 @@ class DatFile(SoundFile):
         """
         self.sensitivity = sensitivity
         self.raw = raw
-        if "raw" in path:
-            self.raw = True
+        # if "raw" in path:
+        #     self.raw = True
         super().__init__(path, skip_data, identifier)
 
     def _read_header(self):
@@ -194,7 +194,12 @@ class DatFile(SoundFile):
         if self.raw:
             #str start date is not correct in raw data since it comes from user computer used to start recording
             cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
-            offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
+            try :
+                offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
+            except :
+                # warnings.warn('Data not corrected from offset')
+                offset = int(file_header[11].split()[-1])*200
+            #forced raw mode header :int(file_header[11].split()[-1])
             gps_zero = ' '.join(file_header[8].split()[-4:])
             locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
             if "." in gps_zero:
