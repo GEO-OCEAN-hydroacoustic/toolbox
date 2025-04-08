@@ -41,6 +41,7 @@ class SpectralView(QtWidgets.QWidget):
         # min and max shown frequencies
         self.freq_range = [0, int(self.manager.sampling_f / 2)]
 
+        self.data, self.start, self.end = [], None, None
 
         # main layout that will contain the spectro, dataset name and options
         self.layout = QtWidgets.QHBoxLayout(self)
@@ -179,7 +180,6 @@ class SpectralView(QtWidgets.QWidget):
         :return: None.
         """
         self.segment_date_slider.sliderReleased.disconnect(self.update_segment_date_editor)
-        self.segment_date_slider.sliderReleased.disconnect(self.update_plot)
 
         new_date = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
                                          self.segment_date_dateTimeEdit.time())
@@ -189,7 +189,6 @@ class SpectralView(QtWidgets.QWidget):
                                                                  self.segment_date_dateTimeEdit.time()) - self.manager.dataset_start).total_seconds())
 
         self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
-        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
 
     def update_segment_date_editor(self, secondary_trigger=False):
         """ Update the segment date editor after the slider is changed.
@@ -230,15 +229,38 @@ class SpectralView(QtWidgets.QWidget):
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
         start, end = self.get_time_bounds()
         # get the spectro from the extractor to be able to show it
-        data = self.manager.get_segment(start, end)
-        (f, t, spectro) = make_spectrogram(data, self.manager.sampling_f, t_res=0.5342, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
+        if self.start != start or self.end != end:
+            self.start, self.end = start, end
+            self.data = self.manager.get_segment(start, end)
+            (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
 
-        # label the time axis from -delta to +delta
-        extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
-        self.mpl.axes.cla()
-        self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="jet")
-        self.mpl.axes.set_xlabel('t (s)')
-        self.mpl.axes.set_ylabel('f (Hz)')
+            # label the time axis from -delta to +delta
+            extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
+            self.mpl.axes.cla()
+            self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="inferno")
+            self.mpl.axes.axvline(0, color="w", alpha=0.25, linestyle="--")
+            self.mpl.axes.set_xlabel('t (s)')
+            self.mpl.axes.set_ylabel('f (Hz)')
+
+            # get previously picked events
+            if self.station in self.spectralViewer.loc_res:
+                l = self.spectralViewer.loc_res[self.station]
+                idx = np.searchsorted(l, self.start, side="left") - 1
+                idx = max(idx, 0)
+                while idx < len(l) and l[idx] < self.end:
+                    if l[idx] > self.start:
+                        t = (l[idx] - (self.start + delta)).total_seconds()
+                        self.mpl.axes.axvline(t, color="bisque", alpha=0.5, linestyle="--")
+                    idx += 1
+            if self.station in self.spectralViewer.loc_res_single:
+                l = self.spectralViewer.loc_res_single[self.station]
+                idx = np.searchsorted(l, self.start, side="left") - 1
+                idx = max(idx, 0)
+                while idx < len(l) and l[idx] < self.end:
+                    if l[idx] > self.start:
+                        t = (l[idx] - (self.start + delta)).total_seconds()
+                        self.mpl.axes.axvline(t, color="yellow", alpha=0.25, linestyle="--")
+                    idx += 1
 
     def _draw(self):
         """ Update the plot widget.
@@ -259,10 +281,28 @@ class SpectralView(QtWidgets.QWidget):
         :return: None.
         """
         if click.xdata is not None:
-            segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
-                                                   self.segment_date_dateTimeEdit.time())
-            segment_center += datetime.timedelta(seconds=click.xdata)  # move to the click location
-            self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
+            if click.button.name == "LEFT":
+                segment_center = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                                       self.segment_date_dateTimeEdit.time())
+                segment_center += datetime.timedelta(seconds=click.xdata)  # move to the click location
+                self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
+            elif click.button.name == "RIGHT":  # Pn / T annotation
+                path = self.spectralViewer.loc_res_path[:-4] + "_Pn.csv"
+                if path is not None:
+                    with open(path, "a+") as f:
+                        name = self.station.name
+                        center_time = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
+                                                               self.segment_date_dateTimeEdit.time())
+                        click_time = center_time + datetime.timedelta(seconds=click.xdata)
+                        if "ShiftModifier" in str(click.guiEvent):
+                            f.write(f'{name},{click_time.strftime("%Y%m%d_%H%M%S")},{center_time.strftime("%Y%m%d_%H%M%S")}')
+                        else:
+                            f.write(f'{name},{click_time.strftime("%Y%m%d_%H%M%S")}')
+                        self.spectralViewer.loc_res_single.setdefault(self.station, []).append(click_time)
+                        self.spectralViewer.loc_res_single[self.station] = sorted(self.spectralViewer.loc_res_single[self.station])
+                        self.mpl.axes.axvline(click.xdata, color="yellow", alpha=0.25, linestyle="--")
+                        self.mpl.draw()
+                        f.write("\n")
 
     def on_key(self, key):
         """ Handles key press operations by passing the event to the parent spectral_viewer.
@@ -299,9 +339,8 @@ class SpectralView(QtWidgets.QWidget):
 
             # write a temporary file
             to_write = np.int16(32767 * data / np.max(np.abs(data)))
-            scipy.io.wavfile.write("./temp_audio.wav", int(self.manager.sampling_f * 20), to_write)
-            playsound("./temp_audio.wav")
-            # delete the temporary file
+            scipy.io.wavfile.write("../../data/GUI/temp_audio.wav", int(self.manager.sampling_f * 20), to_write)
+            playsound("../../data/GUI/temp_audio.wav")
 
         elif key.key == "up":
             # increase min and max allowed frequency, respecting the limit of the Nyquist-Shannon frequency

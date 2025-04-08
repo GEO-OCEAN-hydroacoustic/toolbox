@@ -1,4 +1,5 @@
 import datetime
+from pathlib import Path
 
 import glob2
 import numpy as np
@@ -10,23 +11,24 @@ from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QScrollArea, QWidget, QI
 from PySide6.QtCore import (Qt)
 from PySide6.QtGui import (QAction)
 from PySide6.QtWidgets import (QMainWindow, QToolBar)
-from numpy.linalg.linalg import LinAlgError
+from numpy.linalg import LinAlgError
 from skimage.transform import resize
 
 from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
-from utils.physics.sound_model.spherical_sound_model import HomogeneousSoundModel as SoundModel
 from utils.detection.TiSSNet import TiSSNet
+
 
 MIN_SPECTRAL_VIEW_HEIGHT = 200
 DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, database_yaml, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
+    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
         """ Constructor initializing the window and setting its visual appearance.
-        :param database_yaml: YAML file containing information about the available stations.
+        :param datasets_csv: csv file containing information about the available stations.
+        :param sound_model: Sound model used to predict travel time and to locate events.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         :param events_path: Path of a yaml file describing some events.
         :param loc_res_path: Path of file where the localization results will be written.
@@ -37,13 +39,49 @@ class SpectralViewerWindow(QMainWindow):
             self.detection_model = TiSSNet()
             self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
 
+        self.sound_model = sound_model
+
         self.events_path = events_path
+        self.loc_res = {}  # contains the pick dates of the events located with the tool
+        self.loc_res_single = {}  # contains the pick dates of the previous single-station picks
+
 
         self.loc_res_path = loc_res_path
 
         super().__init__()
-        self.sound_model = SoundModel()
-        self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
+        self.stations = StationsCatalog(datasets_csv).filter_out_undated().filter_out_unlocated()
+        print(f"{len(self.stations)} stations found from csv file")
+
+        # load previously located events and link each pick to its station
+        if Path(self.loc_res_path).exists():
+            with open(self.loc_res_path, "r") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip().split(",")
+                if len(line) == 0:
+                    continue
+                for sname, date in [line[i:i+2] for i in range(6, len(line)-1, 2)]:
+                    date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
+                    s = self.stations.by_name(sname).by_date(date)[0]
+                    self.loc_res.setdefault(s, []).append(date)
+            for s in self.loc_res.keys():
+                self.loc_res[s] = sorted(self.loc_res[s])
+        single_path = self.loc_res_path[:-4] + "_Pn.csv"
+        if Path(single_path).exists():
+            with open(single_path, "r") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip().split(",")
+                if len(line) == 0:
+                    continue
+                date = datetime.datetime.strptime(line[1], "%Y%m%d_%H%M%S")
+                s = self.stations.by_name(line[0]).by_date(date)
+                if len(s)==0:
+                    print(f"Unable to find station {line[0]} active at {line[1]}")
+                s = s[0]
+                self.loc_res_single.setdefault(s, []).append(date)
+            for s in self.loc_res_single.keys():
+                self.loc_res_single[s] = sorted(self.loc_res_single[s])
 
         self.setWindowTitle(u"Acoustic viewer")
 
@@ -143,9 +181,9 @@ class SpectralViewerWindow(QMainWindow):
                 # check if the station is registered in the dataset
                 split = directory.split("/")
                 split = list(filter(str,split))  # remove empty members if the path ends with "/"
-                s_year, s_name = int(split[-2]), split[-1]
-                st = self.stations.by_name(s_name).by_starting_year(s_year)
-                if len(st) > 0:
+                s_dataset, s_name = split[-2], split[-1]
+                st = self.stations.by_name(s_name).by_dataset(s_dataset)
+                if len(st) == 1:
                     station = st[0]
                     print(f"Station {st[0]} recognized")
                 station = station or Station(directory, initialize_metadata=True)
@@ -263,11 +301,16 @@ class SpectralViewerWindow(QMainWindow):
 
         if self.loc_res_path is not None:
             with open(self.loc_res_path, "a") as f:
-                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{len(detection_times)},{src.cost}')
+                # to obtain a UTC timestamp we need to specify it
+                UTC_datetime = time.replace(tzinfo=datetime.timezone.utc)
+                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{UTC_datetime.timestamp()},'
+                        f'{len(detection_times)},{src.cost}')
                 for s in self.SpectralViews:
                     if s.focused:
                         name = s.station.name
                         pick_time = Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
                                                     s.segment_date_dateTimeEdit.time())
                         f.write(f',{name},{pick_time.strftime("%Y%m%d_%H%M%S")}')
+                        self.loc_res.setdefault(s.station, []).append(pick_time)
+                        self.loc_res[s.station] = sorted(self.loc_res[s.station])
                 f.write("\n")

@@ -191,7 +191,7 @@ class SoundFilesManager:
         """ Basic display of sound file manager.
         :return: A string representation of the manager.
         """
-        res = f"File manager of station {self.name} of type {self.__class__.__name__}"
+        res = f"{self.name}"
         return res
 
 class WavFilesManager(SoundFilesManager):
@@ -280,6 +280,8 @@ def make_manager(path, kwargs=None):
     :return: A FilesManager instance able to load the files of the given directory, or None.
     """
     files = [f.split('.')[-1] for f in os.listdir(path)]
+    if "sensitivity" in kwargs and np.isnan(float(kwargs["sensitivity"])):
+        del kwargs["sensitivity"]
     if WavFile.EXTENSION in files:
         return WavFilesManager(path, kwargs=kwargs)
     if DatFile.EXTENSION in files:

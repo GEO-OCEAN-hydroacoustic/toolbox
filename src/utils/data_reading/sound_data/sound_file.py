@@ -1,4 +1,5 @@
 import datetime
+import os
 import wave
 
 import numpy as np
@@ -119,17 +120,16 @@ class SoundFile:
             return self.identifier == other.identifier
         return False
 
-
 class WavFile(SoundFile):
     """ Class representing .wav files. We expect wav files to be named with their start time as YYYYMMDD_hhmmss.
     """
     EXTENSION = "wav"
-    TO_VOLT = 5.0 / 2 ** 32 # we consider a fixed dynamic range of 5V on 32 bits
+    TO_VOLT = 0.919
 
     def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
-        :param sensitivity: Sensibility of the sensor.
+        :param sensitivity: Sensitivity of the sensor.
         :param skip_data: If True, we only read the metadata of the file. Else, we also read its content.
         :param identifier: The ID of this file, that will be used to compare it with another file. If unspecified,
         path is used.
@@ -151,7 +151,10 @@ class WavFile(SoundFile):
         file_name = self.path.split("/")[-1][:-4]  # get the name of the file and get rid of extension
 
         # example : 24-02-22_000011.128000_acq.wav
-        self.header["start_date"] = datetime.datetime.strptime("20"+file_name, "%Y-%m-%d_%H%M%S.%f_acq")
+        if "acq" in file_name:
+            self.header["start_date"] = datetime.datetime.strptime("20"+file_name, "%Y-%m-%d_%H%M%S.%f_acq")
+        else:
+            self.header["start_date"] = datetime.datetime.strptime(file_name, "%Y%m%d_%H%M%S")
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
 
     def _read_data_subpart_uncached(self, offset_points_start, points_to_keep):
@@ -162,8 +165,10 @@ class WavFile(SoundFile):
         """
         file = sf.SoundFile(self.path)
         file.seek(offset_points_start if offset_points_start else 0)
-        data = file.read(points_to_keep if points_to_keep else -1, dtype='int32')
-        data = data * (self.TO_VOLT / 10 ** (self.sensitivity / 20))
+        data = file.read(points_to_keep if points_to_keep else -1, dtype='float32')
+
+        data = data * (self.TO_VOLT / 10 ** ((self.sensitivity -1) / 20))
+
         return data
 
 
@@ -176,7 +181,7 @@ class DatFile(SoundFile):
     def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw=False):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
-        :param sensitivity: Sensibility of the sensor.
+        :param sensitivity: Sensitivity of the sensor.
         :param skip_data: If True, we only read the metadata of the file. Else, we also read its content.
         :param identifier: The ID of this file, that will be used to compare it with another file. If unspecified,
         path is used.
@@ -194,7 +199,7 @@ class DatFile(SoundFile):
         with open(self.path, 'rb') as file:
             file_header = file.read(400)
 
-        file_header = file_header.decode('ascii').split("\n")
+        file_header = file_header.decode('utf-8').split("\n")
 
         self.header["site"] = file_header[3].split()[1]
         self.header["bytes_per_sample"] = int(re.findall(r'(\d*)\s*[bB]', file_header[6])[0])
@@ -267,7 +272,6 @@ class DatFile(SoundFile):
 
         # now convert data to meaningful data
         return data
-
 
 class WFile(SoundFile):
     """ Class representing a record from a .w file specific of CTBTO's IMS.
