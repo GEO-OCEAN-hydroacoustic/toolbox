@@ -54,6 +54,9 @@ class Station:
     def __str__(self):
         return f"station_{self.dataset}_{self.name}_{self.date_start.year}"
 
+    def __repr__(self):
+        return self.__str__()
+
     def __eq__(self, other):
         return (self.name == other.name and self.lat == other.lat and self.lon == other.lon and
                 self.date_start == other.date_start and self.date_end == other.date_end)

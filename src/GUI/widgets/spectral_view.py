@@ -179,6 +179,7 @@ class SpectralView(QtWidgets.QWidget):
         :return: None.
         """
         self.segment_date_slider.sliderReleased.disconnect(self.update_segment_date_editor)
+        self.segment_date_slider.sliderReleased.disconnect(self.update_plot)
 
         new_date = Qdatetime_to_datetime(self.segment_date_dateTimeEdit.date(),
                                          self.segment_date_dateTimeEdit.time())
@@ -188,6 +189,7 @@ class SpectralView(QtWidgets.QWidget):
                                                                  self.segment_date_dateTimeEdit.time()) - self.manager.dataset_start).total_seconds())
 
         self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
+        self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
 
     def update_segment_date_editor(self, secondary_trigger=False):
         """ Update the segment date editor after the slider is changed.

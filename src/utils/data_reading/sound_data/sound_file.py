@@ -124,6 +124,18 @@ class WavFile(SoundFile):
     """ Class representing .wav files. We expect wav files to be named with their start time as YYYYMMDD_hhmmss.
     """
     EXTENSION = "wav"
+    TO_VOLT = 5.0 / 2 ** 32 # we consider a fixed dynamic range of 5V on 32 bits
+
+    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
+        """ Constructor reading file metadata and content if required.
+        :param path: The path of the file.
+        :param sensitivity: Sensibility of the sensor.
+        :param skip_data: If True, we only read the metadata of the file. Else, we also read its content.
+        :param identifier: The ID of this file, that will be used to compare it with another file. If unspecified,
+        path is used.
+        """
+        self.sensitivity = sensitivity
+        super().__init__(path, skip_data, identifier)
 
     def _read_header(self):
         """ Read the metadata of the file using its name and header and update self.header.
@@ -137,9 +149,9 @@ class WavFile(SoundFile):
         duration_micro = 10 ** 6 * self.header["samples"] / self.header["sampling_frequency"]
         self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
         file_name = self.path.split("/")[-1][:-4]  # get the name of the file and get rid of extension
-        if "_-_" in file_name:  # in case the file name contains the end of the file, we remove it
-            file_name = file_name.split("-")[0][:-1]
-        self.header["start_date"] = datetime.datetime.strptime(file_name, "%Y%m%d_%H%M%S")
+
+        # example : 24-02-22_000011.128000_acq.wav
+        self.header["start_date"] = datetime.datetime.strptime("20"+file_name, "%Y-%m-%d_%H%M%S.%f_acq")
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
 
     def _read_data_subpart_uncached(self, offset_points_start, points_to_keep):
@@ -151,6 +163,7 @@ class WavFile(SoundFile):
         file = sf.SoundFile(self.path)
         file.seek(offset_points_start if offset_points_start else 0)
         data = file.read(points_to_keep if points_to_keep else -1, dtype='int32')
+        data = data * (self.TO_VOLT / 10 ** (self.sensitivity / 20))
         return data
 
 
@@ -290,10 +303,16 @@ class WFile(SoundFile):
             to_read = points_to_keep if points_to_keep else \
                 self.header["end_index"] - start_idx if self.header["end_index"] else -1
             file.seek(start_idx * self.header["bytes_per_sample"])
-            data = file.read(-1 if to_read < 0 else to_read * self.header["bytes_per_sample"])
-        data = np.frombuffer(data, dtype=">u4")
+            data = file.read(-1 if to_read<0 else to_read * self.header["bytes_per_sample"])
+        data = np.frombuffer(data, dtype=">f4")
 
         # now convert data to meaningful data
         data = butter_bandpass_filter(data, 1, 119, self.header["sampling_frequency"])
         data = data * self.header["cnt_to_upa"]
         return data
+
+    def read_data(self):
+        """ Method to read the whole file, disabled for .w which are generally very big.
+        :return: None
+        """
+        return None

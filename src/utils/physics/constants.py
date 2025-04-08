@@ -1,0 +1,2 @@
+M_PER_DEG = 110_574  # m
+EARTH_RADIUS = 6_378_000  # m

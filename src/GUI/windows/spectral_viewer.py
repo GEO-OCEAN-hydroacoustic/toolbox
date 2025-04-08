@@ -10,24 +10,26 @@ from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QScrollArea, QWidget, QI
 from PySide6.QtCore import (Qt)
 from PySide6.QtGui import (QAction)
 from PySide6.QtWidgets import (QMainWindow, QToolBar)
+from numpy.linalg.linalg import LinAlgError
 from skimage.transform import resize
 
 from GUI.widgets.spectral_view import SpectralView, Qdatetime_to_datetime, datetime_to_Qdatetime
 from GUI.widgets.spectral_view_augmented import SpectralViewTissnet
 from utils.data_reading.sound_data.station import StationsCatalog, Station
-from utils.physics.sound_model.sound_model import HomogeneousSoundModel
+from utils.physics.sound_model.spherical_sound_model import HomogeneousSoundModel as SoundModel
 from utils.detection.TiSSNet import TiSSNet
 
-MIN_SPECTRAL_VIEW_HEIGHT = 400
+MIN_SPECTRAL_VIEW_HEIGHT = 200
 DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, database_yaml, tissnet_checkpoint=None, events_path=None):
+    def __init__(self, database_yaml, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
         """ Constructor initializing the window and setting its visual appearance.
         :param database_yaml: YAML file containing information about the available stations.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         :param events_path: Path of a yaml file describing some events.
+        :param loc_res_path: Path of file where the localization results will be written.
         """
         # TiSSNet
         self.detection_model = None
@@ -37,8 +39,10 @@ class SpectralViewerWindow(QMainWindow):
 
         self.events_path = events_path
 
+        self.loc_res_path = loc_res_path
+
         super().__init__()
-        self.sound_model = HomogeneousSoundModel()
+        self.sound_model = SoundModel()
         self.stations = StationsCatalog(database_yaml).filter_out_undated().filter_out_unlocated()
 
         self.setWindowTitle(u"Acoustic viewer")
@@ -55,10 +59,10 @@ class SpectralViewerWindow(QMainWindow):
 
         self.topBarLayout.addStretch()
         self.eventIDLabel = QLabel(self.centralWidget)
-        self.eventIDLabel.setFixedSize(750, 35)
+        self.eventIDLabel.setFixedSize(750, 20)
         self.topBarLayout.addWidget(self.eventIDLabel)
         self.srcEstimateLabel = QLabel(self.centralWidget)
-        self.srcEstimateLabel.setFixedSize(950, 35)
+        self.srcEstimateLabel.setFixedSize(950, 20)
         self.topBarLayout.addWidget(self.srcEstimateLabel)
         self.topBarLayout.addStretch()
 
@@ -137,12 +141,13 @@ class SpectralViewerWindow(QMainWindow):
             if len(files) > 0:
                 station = None
                 # check if the station is registered in the dataset
-                for st in self.stations:
-                    split = directory.split("/")
-                    s_dataset, s_name = split[-3], split[-2]
-                    if st.name == s_name and st.dataset == s_dataset:
-                        station = st
-                        print(f"Station {st} recognized")
+                split = directory.split("/")
+                split = list(filter(str,split))  # remove empty members if the path ends with "/"
+                s_year, s_name = int(split[-2]), split[-1]
+                st = self.stations.by_name(s_name).by_starting_year(s_year)
+                if len(st) > 0:
+                    station = st[0]
+                    print(f"Station {st[0]} recognized")
                 station = station or Station(directory, initialize_metadata=True)
                 self._add_spectral_view(station)
             # else we recursively look for .dat or .wav files
@@ -243,9 +248,26 @@ class SpectralViewerWindow(QMainWindow):
             return
         detection_times = np.array([Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
                                                           s.segment_date_dateTimeEdit.time()) for s in self.SpectralViews if s.focused])
-        src = self.sound_model.localize_common_source(sensors_positions, detection_times)
+
+
+        try:
+            src = self.sound_model.localize_common_source(sensors_positions, detection_times)
+        except LinAlgError:
+            self.srcEstimateLabel.setText(f'The localization algorithm did not converge')
+            return
         time = detection_times[0] + np.mean([(detection_times[i] -
                         datetime.timedelta(seconds=self.sound_model.get_sound_travel_time(src.x[1:], sensors_positions[i], detection_times[0]))) - detection_times[0]
                          for i in range(len(sensors_positions))])
         self.srcEstimateLabel.setText(f'Location estimate : {[float(f"{v:.2f}") for v in src.x]} at '
                                       f'{time.strftime("%Y%m%d_%H%M%S")} (cost {src.cost:.2f})')
+
+        if self.loc_res_path is not None:
+            with open(self.loc_res_path, "a") as f:
+                f.write(f'{time.strftime("%Y%m%d_%H%M%S")},{src.x[1]},{src.x[2]},{len(detection_times)},{src.cost}')
+                for s in self.SpectralViews:
+                    if s.focused:
+                        name = s.station.name
+                        pick_time = Qdatetime_to_datetime(s.segment_date_dateTimeEdit.date(),
+                                                    s.segment_date_dateTimeEdit.time())
+                        f.write(f',{name},{pick_time.strftime("%Y%m%d_%H%M%S")}')
+                f.write("\n")
