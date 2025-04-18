@@ -142,7 +142,7 @@ def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0
                     merge_delta=datetime.timedelta(seconds=5)):
     detections = {}
     for det_file in det_files:
-        station_dataset, station_name = det_file[:-4].split("/")[-1].split("_")
+        station_dataset, station_name = det_file.split("/")[-2],det_file.split("/")[-1].split("_")[-1].split('-')[0]
         station = stations.by_dataset(station_dataset).by_name(station_name)
         if len(station) != 1:
             print(
