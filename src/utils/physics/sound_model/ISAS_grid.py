@@ -5,6 +5,7 @@ import gsw
 warnings.filterwarnings('ignore')
 import numpy as np
 from geopy.distance import geodesic
+from scipy import interpolate
 
 def calculate_sound_velocity(ds, fast=True):
     # Sound velocity formula: Chen & Millero (1977)
@@ -37,6 +38,58 @@ def calculate_sound_velocity(ds, fast=True):
         # Calculate the sound speed (in m/s) using gsw.sound_speed.
         C = gsw.sound_speed(SA, CT, p)
     return C
+
+def calculate_gsw_celerity_error(ds):
+    Z, LAT = np.meshgrid(-ds.depth.values, ds.latitude.values, indexing='ij')
+    Z_3d, LAT_3d, LON_3d = xr.broadcast(
+        xr.DataArray(Z, dims=['depth', 'latitude']),
+        xr.DataArray(LAT, dims=['depth', 'latitude']),
+        ds.longitude
+    )
+
+    # Extract numpy arrays for use with GSW:
+    Z_3d = Z_3d.values
+    LAT_3d = LAT_3d.values
+    LON_3d = LON_3d.values
+
+    p = gsw.p_from_z(Z_3d, LAT_3d)
+    SA = gsw.SA_from_SP(ds.PSAL.values, p, LON_3d, LAT_3d)
+    CT = gsw.CT_from_t(SA, ds.TEMP.values, p)
+    C = gsw.sound_speed(SA, CT, p)
+
+    # Finite difference estimates
+    SA_plus = gsw.SA_from_SP(ds.PSAL.values + ds.PSAL_ERR, p, LON_3d, LAT_3d)
+    CT_plus = gsw.CT_from_t(SA_plus, ds.TEMP.values + ds.TEMP_ERR, p)
+    C_plus = gsw.sound_speed(SA_plus, CT_plus, p)
+
+    SA_minus = gsw.SA_from_SP(ds.PSAL.values - ds.PSAL_ERR, p, LON_3d, LAT_3d)
+    CT_minus = gsw.CT_from_t(SA_minus, ds.TEMP.values - ds.TEMP_ERR, p)
+    C_minus = gsw.sound_speed(SA_minus, CT_minus, p)
+
+    # Estimate of uncertainty: (C+ - C−)/2
+    C_error = (np.abs(C_plus - C_minus)) / 2
+    return C_error
+
+
+
+def calculate_celerity_error(ds, use_pctvar=False):
+    if use_pctvar:
+        TEMP_ERR = (ds.TEMP_PCTVAR / 100) * ds.TEMP
+        PSAL_ERR = (ds.PSAL_PCTVAR / 100) * ds.PSAL
+    else:
+        TEMP_ERR = ds.TEMP_ERR
+        PSAL_ERR = ds.PSAL_ERR
+
+    # Partial derivatives of Chen & Millero equation
+    dC_dT = 4.6 - 2 * 0.055 * ds.TEMP + 3 * 0.00029 * ds.TEMP**2 - 0.01 * (ds.PSAL - 35)+ds.depth*0
+    dC_dS = 1.34 - 0.01 * ds.TEMP +ds.depth*0
+
+    # Error propagation
+    C_error = np.sqrt((dC_dT * TEMP_ERR)**2 + (dC_dS * PSAL_ERR)**2)+ds.depth*0
+
+    return C_error
+
+
 
 # Define the Mackenzie sound speed function
 def mackenzie_sound_speed(ds):
@@ -79,6 +132,11 @@ def load_ISAS_TS(ISAS_Repertory, month,lat_bounds,lon_bounds, fast=True):
     ds = xr.merge(ds)
     # Calculate sound velocity for each point in the dataset
     sound_velocity = calculate_sound_velocity(ds,fast)
+    # sv_err = calculate_celerity_error(ds, use_pctvar=False)
+    sv_err = calculate_gsw_celerity_error(ds)
+    ds = ds.assign(SV_ERR=(ds.TEMP.dims, sv_err.data))
+    ds["SV_ERR"].attrs["units"] = "m s^{-1}"
+    ds["SV_ERR"].attrs["long_name"] = "Estimated Uncertainty in Sound Velocity"
     # Add sound velocity as a new variable to the dataset
     if fast:
         sound_velocity = xr.Dataset(dict(SOUND_VELOCITY=sound_velocity))
@@ -90,6 +148,7 @@ def load_ISAS_TS(ISAS_Repertory, month,lat_bounds,lon_bounds, fast=True):
         ds = ds.assign(SOUND_VELOCITY=(ds.TEMP.dims, sound_velocity))
         ds['SOUND_VELOCITY'].attrs["units"] = "m s^{-1}"
         ds['SOUND_VELOCITY'].attrs["long_name"] = "Sound Velocity"
+
     return ds
 
 def _generate_coordinates_with_fixed_resolution(lat1, lon1, lat2, lon2, resolution):
@@ -122,15 +181,62 @@ def _generate_coordinates_with_fixed_resolution(lat1, lon1, lat2, lon2, resoluti
     coordinates = np.column_stack((lats, lons))
     return coordinates, distances, total_distance
 
-def extract_velocity_profile(ds, coordinates, method ='nearest') :
-    depth = ds['depth'].values
-    temp_profile = np.full((len(depth), len(coordinates)), np.nan)
-    for i, (lat, lon) in enumerate(coordinates):
-        temp_at_point = ds.sel(latitude=lat, longitude=lon, method=method)['SOUND_VELOCITY']
-        temp_profile[:, i] = temp_at_point.values
-    return temp_profile, depth
 
-def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=True):
+def extract_velocity_profile(ds, coordinates, method='nearest', interpolate_missing=False):
+    depth = ds['depth'].values
+    # temp_profile = np.full((len(depth), len(coordinates)), np.nan)
+    # temp_err = np.full((len(depth), len(coordinates)), np.nan)
+    # for i, (lat, lon) in enumerate(coordinates):
+    #     temp_at_point = ds.sel(latitude=lat, longitude=lon, method=method)['SOUND_VELOCITY']
+    #     temp_profile[:, i] = temp_at_point.values
+    #     temp_err_at_point = ds.sel(latitude=lat, longitude=lon, method=method)['SV_ERR']
+    #     temp_err[:, i] = temp_err_at_point.values
+    # First extract all data points, even if they contain NaN values
+    points = xr.Dataset({'latitude': (['points'], coordinates[:,0]),
+                         'longitude': (['points'], coordinates[:,1])})
+    temp_profile = ds['SOUND_VELOCITY'].sel(latitude=points['latitude'],
+                                        longitude=points['longitude'],
+                                        method='nearest').values[0]
+    temp_err = ds['SV_ERR'].sel(latitude=points['latitude'],
+                                        longitude=points['longitude'],
+                                        method='nearest').values[0]
+
+    # If interpolation is requested, perform horizontal interpolation
+    if interpolate_missing:
+        # Interpolate along each depth level (horizontally)
+        for d in range(len(depth)):
+            row = temp_profile[d, :]
+            row_err = temp_err[d, :]
+            # Find valid indices
+            valid_indices = np.where(~np.isnan(row))[0]
+
+            # Only interpolate if we have at least 2 valid points
+            if len(valid_indices) >= 2:
+                valid_distances = np.arange(len(coordinates))[valid_indices]
+                valid_values = row[valid_indices]
+
+                # Create interpolated values using numpy's interp function
+                interp_values = np.interp(
+                    np.arange(len(coordinates)),  # All x positions
+                    valid_distances,  # Valid x positions
+                    valid_values,  # Valid values
+                    left=np.nan,  # Don't extrapolate left
+                    right=np.nan  # Don't extrapolate right
+                )
+                temp_err_int = np.interp(
+                    np.arange(len(coordinates)),  # All x positions
+                    valid_distances,  # Valid x positions
+                    row_err[valid_indices],  # Valid values
+                    left=np.nan,  # Don't extrapolate left
+                    right=np.nan  # Don't extrapolate right
+                )
+
+                temp_profile[d, :] = interp_values
+                temp_err[d, :] = temp_err_int
+    return temp_profile, temp_err, depth
+
+
+def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=True, interpolate_missing=False):
     """
     Compute the travel time of a sound wave between two points at a given depth.
 
@@ -141,6 +247,7 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
     - ds: xarray.Dataset containing 'SOUND_VELOCITY' with dimensions (depth, latitude, longitude).
     - resolution: Spacing in km between points along the geodesic path.
     - verbose: If True, prints diagnostics.
+    - interpolate_missing: If True, interpolates horizontally to fill missing values.
 
     Returns:
     - travel_time: Total travel time in seconds.
@@ -155,45 +262,66 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
         lat1, lon1, lat2, lon2, resolution_m
     )
 
-    # Get sound velocity profile at each coordinate point
-    sound_velocity_profile = []
-    for lat, lon in coordinates:
-        c = ds.sel(latitude=lat, longitude=lon, method='nearest')['SOUND_VELOCITY'] \
-              .sel(depth=depth, method='nearest').values
+    lats, lons = zip(*coordinates)
+    lats = np.array(lats)
+    lons = np.array(lons)
 
-        if np.isnan(c) or c < 100 or c > 1700:  # sanity check
-            raise ValueError(f"Unrealistic sound velocity ({c}) at lat={lat}, lon={lon}, depth={depth}")
+    sound_velocity_profile = ds['SOUND_VELOCITY'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),
+        depth=depth,  method="nearest"
+    ).values
 
-        sound_velocity_profile.append(c)
+    # Apply horizontal interpolation if requested
+    if interpolate_missing and np.any(np.isnan(sound_velocity_profile)):
+        print('interpolating missing values')
+        # Find valid indices
+        sound_velocity_profile = sound_velocity_profile.flatten()
+        mask = ~np.isnan(sound_velocity_profile)
+        indices = np.arange(len(sound_velocity_profile.flatten()))
 
-    sound_velocity_profile = np.array(sound_velocity_profile)
+        valid_indices = indices[mask.flatten()]
+        valid_values = sound_velocity_profile[mask]
+        # Only interpolate if we have at least 2 valid points
+        if len(valid_indices) >= 2:
+            valid_values = sound_velocity_profile[valid_indices]
+            # Create interpolated values using numpy's interp function
+            f = interpolate.interp1d(valid_indices, valid_values,
+                                     bounds_error=False,  # Allow extrapolation
+                                     fill_value="extrapolate")
+            # Apply interpolation to the entire array
+            sound_velocity_profile = f(indices).reshape(-1, 1)
 
-    # Compute segment distances and use average velocity for each segment
-    travel_time = 0
-    segment_lengths = []
+    # Check for any remaining NaN values or unrealistic sound velocities
+    if np.any(np.isnan(sound_velocity_profile)) or np.any(sound_velocity_profile < 100) or np.any(sound_velocity_profile > 1700):
+        for i, c in enumerate(sound_velocity_profile.flatten()):
+            if np.isnan(c) or c < 100 or c > 1700:  # sanity check
+                lat, lon = coordinates[i]
+                raise ValueError(f"Unrealistic sound velocity ({c}) at lat={lat}, lon={lon}, depth={depth}")
 
-    for i in range(len(coordinates) - 1):
-        pt1 = coordinates[i]
-        pt2 = coordinates[i + 1]
+    sv_error_profile = ds['SV_ERR'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),
+        depth=depth,  method="nearest"
+    ).values
+    # This could be vectorized as:
+    segment_lengths = np.array([geodesic(coordinates[i], coordinates[i+1]).meters for i in range(len(coordinates)-1)])
+    avg_velocities = 0.5 * (sound_velocity_profile[:,:-1] + sound_velocity_profile[:,1:])
+    travel_time = np.sum(segment_lengths / avg_velocities)
+    avg_error = 0.5 * (sv_error_profile[:,:-1] + sv_error_profile[:,1:])
+    tt_segment_err = np.square((segment_lengths / avg_velocities ** 2) * avg_error)
+    tt_total_err = np.sqrt(np.sum(tt_segment_err))
 
-        # Distance between points in meters
-        segment_length = geodesic(pt1, pt2).meters
-        segment_lengths.append(segment_length)
-
-        # Use average velocity between the two points
-        v1 = sound_velocity_profile[i]
-        v2 = sound_velocity_profile[i + 1]
-        avg_velocity = 0.5 * (v1 + v2)
-
-        travel_time += segment_length / avg_velocity
+    if not hasattr(travel_time, '__len__'):
+        travel_time = np.array([travel_time])
 
     # Verbose diagnostics
     if verbose:
-        print(f"Total distance: {total_distance/1000:.2f} km")
+        print(f"Total distance: {total_distance / 1000:.2f} km")
         print(f"Segments: {len(segment_lengths)}")
-        print(f"Velocity: mean={np.mean(sound_velocity_profile):.2f} m/s, min={np.min(sound_velocity_profile):.2f}, max={np.max(sound_velocity_profile):.2f}")
-        print(f"Travel time: {travel_time[0]:.2f} s ({travel_time[0]/3600:.2f} hr)")
-
-    return travel_time[-1], total_distance
-
+        print(
+            f"Velocity: mean={np.mean(sound_velocity_profile):.2f} m/s, min={np.min(sound_velocity_profile):.2f}, max={np.max(sound_velocity_profile):.2f}")
+        print(f"Travel time: {travel_time[-1]:.2f} s ({travel_time[-1] / 3600:.2f} hr)")
+        print(f"Travel time error: {tt_total_err:.2f} s")
+    return travel_time[-1], tt_total_err, total_distance
 
