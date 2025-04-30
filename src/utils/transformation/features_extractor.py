@@ -181,7 +181,7 @@ class STFTFeaturesExtractor(FeaturesExtractor):
             plt.xlabel("time (s)")
             plt.ylabel("frequency (Hz)")
 
-class DWTFeaturesExtractor(FeaturesExtractor):
+class DWTFeaturesExtractor(FeaturesExtractor):_process_kwargs
     """ Scalogram generation features extractor.
     """
     EXTENSION = "npy"  # save scalograms as numpy array (not a picture because each level has a different resolution)

@@ -39,7 +39,27 @@ def calculate_sound_velocity(ds, fast=True):
         C = gsw.sound_speed(SA, CT, p)
     return C
 
-def calculate_gsw_celerity_error(ds):
+
+def calculate_gsw_celerity_error(ds, sigma_P=0.1):
+    """
+    Compute error in sound speed (m/s) due to measurement uncertainty
+    using partial derivatives and error propagation.
+
+    Parameters:
+    ds -- xarray Dataset containing:
+          - TEMP: In-situ temperature (°C)
+          - PSAL: Practical salinity
+          - TEMP_ERR: Temperature uncertainty (°C)
+          - PSAL_ERR: Salinity uncertainty
+          - depth: Depth coordinates (m, negative downward)
+          - latitude: Latitude coordinates (degrees)
+          - longitude: Longitude coordinates (degrees)
+    sigma_P -- Uncertainty in pressure (dbar), default = 0.1 dbar
+
+    Returns:
+    C_error -- Estimated sound speed error (m/s)
+    """
+    # Create mesh grids for coordinates
     Z, LAT = np.meshgrid(-ds.depth.values, ds.latitude.values, indexing='ij')
     Z_3d, LAT_3d, LON_3d = xr.broadcast(
         xr.DataArray(Z, dims=['depth', 'latitude']),
@@ -47,63 +67,81 @@ def calculate_gsw_celerity_error(ds):
         ds.longitude
     )
 
-    # Extract numpy arrays for use with GSW:
+    # Extract numpy arrays
     Z_3d = Z_3d.values
     LAT_3d = LAT_3d.values
     LON_3d = LON_3d.values
 
+    # Calculate pressure from depth
     p = gsw.p_from_z(Z_3d, LAT_3d)
+
+    # Calculate base values
     SA = gsw.SA_from_SP(ds.PSAL.values, p, LON_3d, LAT_3d)
     CT = gsw.CT_from_t(SA, ds.TEMP.values, p)
     C = gsw.sound_speed(SA, CT, p)
 
-    # Finite difference estimates
-    SA_plus = gsw.SA_from_SP(ds.PSAL.values + ds.PSAL_ERR, p, LON_3d, LAT_3d)
-    CT_plus = gsw.CT_from_t(SA_plus, ds.TEMP.values + ds.TEMP_ERR, p)
-    C_plus = gsw.sound_speed(SA_plus, CT_plus, p)
+    # Define small deltas for finite difference calculations
+    dT = 1e-2  # Small temperature difference (°C)
+    dS = 1e-2  # Small salinity difference (g/kg)
+    dP = 1e-1  # Small pressure difference (dbar)
 
-    SA_minus = gsw.SA_from_SP(ds.PSAL.values - ds.PSAL_ERR, p, LON_3d, LAT_3d)
-    CT_minus = gsw.CT_from_t(SA_minus, ds.TEMP.values - ds.TEMP_ERR, p)
-    C_minus = gsw.sound_speed(SA_minus, CT_minus, p)
+    # Calculate temperature partial derivative
+    # First convert T+dT to Conservative Temperature
+    SA_same = gsw.SA_from_SP(ds.PSAL.values, p, LON_3d, LAT_3d)
+    CT_plus = gsw.CT_from_t(SA_same, ds.TEMP.values + dT, p)
+    CT_minus = gsw.CT_from_t(SA_same, ds.TEMP.values - dT, p)
 
-    # Estimate of uncertainty: (C+ - C−)/2
-    C_error = (np.abs(C_plus - C_minus)) / 2
+    # Calculate sound speed at T+dT and T-dT
+    C_T_plus = gsw.sound_speed(SA_same, CT_plus, p)
+    C_T_minus = gsw.sound_speed(SA_same, CT_minus, p)
+
+    # Partial derivative with respect to temperature
+    dC_dT = (C_T_plus - C_T_minus) / (2 * dT)
+
+    # Calculate salinity partial derivative
+    # First convert S+dS and S-dS to Absolute Salinity
+    SA_plus = gsw.SA_from_SP(ds.PSAL.values + dS, p, LON_3d, LAT_3d)
+    SA_minus = gsw.SA_from_SP(ds.PSAL.values - dS, p, LON_3d, LAT_3d)
+
+    # Convert to Conservative Temperature with the modified salinity
+    CT_S_plus = gsw.CT_from_t(SA_plus, ds.TEMP.values, p)
+    CT_S_minus = gsw.CT_from_t(SA_minus, ds.TEMP.values, p)
+
+    # Calculate sound speed at S+dS and S-dS
+    C_S_plus = gsw.sound_speed(SA_plus, CT_S_plus, p)
+    C_S_minus = gsw.sound_speed(SA_minus, CT_S_minus, p)
+
+    # Partial derivative with respect to salinity
+    dC_dS = (C_S_plus - C_S_minus) / (2 * dS)
+
+    # Calculate pressure partial derivative
+    # Need to recalculate SA and CT for different pressures since they depend on pressure
+    # For P+dP
+    SA_P_plus = gsw.SA_from_SP(ds.PSAL.values, p + dP, LON_3d, LAT_3d)
+    CT_P_plus = gsw.CT_from_t(SA_P_plus, ds.TEMP.values, p + dP)
+    C_P_plus = gsw.sound_speed(SA_P_plus, CT_P_plus, p + dP)
+
+    # For P-dP
+    SA_P_minus = gsw.SA_from_SP(ds.PSAL.values, p - dP, LON_3d, LAT_3d)
+    CT_P_minus = gsw.CT_from_t(SA_P_minus, ds.TEMP.values, p - dP)
+    C_P_minus = gsw.sound_speed(SA_P_minus, CT_P_minus, p - dP)
+
+    # Partial derivative with respect to pressure
+    dC_dP = (C_P_plus - C_P_minus) / (2 * dP)
+
+    # Get the actual uncertainties from the dataset
+    sigma_T = ds.TEMP_ERR  # Temperature uncertainty
+    sigma_S = ds.PSAL_ERR  # Salinity uncertainty
+    # sigma_P is passed as a parameter (default = 0.1 dbar)
+
+    # Apply error propagation formula including pressure uncertainty
+    C_error = np.sqrt(
+        (dC_dT * sigma_T) ** 2 +
+        (dC_dS * sigma_S) ** 2 +
+        (dC_dP * sigma_P) ** 2
+    )
+
     return C_error
-
-
-
-def calculate_celerity_error(ds, use_pctvar=False):
-    if use_pctvar:
-        TEMP_ERR = (ds.TEMP_PCTVAR / 100) * ds.TEMP
-        PSAL_ERR = (ds.PSAL_PCTVAR / 100) * ds.PSAL
-    else:
-        TEMP_ERR = ds.TEMP_ERR
-        PSAL_ERR = ds.PSAL_ERR
-
-    # Partial derivatives of Chen & Millero equation
-    dC_dT = 4.6 - 2 * 0.055 * ds.TEMP + 3 * 0.00029 * ds.TEMP**2 - 0.01 * (ds.PSAL - 35)+ds.depth*0
-    dC_dS = 1.34 - 0.01 * ds.TEMP +ds.depth*0
-
-    # Error propagation
-    C_error = np.sqrt((dC_dT * TEMP_ERR)**2 + (dC_dS * PSAL_ERR)**2)+ds.depth*0
-
-    return C_error
-
-
-
-# Define the Mackenzie sound speed function
-def mackenzie_sound_speed(ds):
-    temp, psal, depth = ds.TEMP,ds.PSAL, ds.DEPTH
-    C = (1448.96
-         + 4.591 * temp
-         - 5.304e-2 * temp**2
-         + 2.374e-4 * temp**3
-         + 1.340 * (psal - 35)
-         + 1.630e-2 * depth
-         + 1.675e-7 * depth**2
-         - 1.025e-2 * temp * (psal - 35)
-         - 7.139e-13 * temp * depth**3)
-    return C
 
 def load_ISAS_TS(ISAS_Repertory, month,lat_bounds,lon_bounds, fast=True):
     """ Function to load the ISAS Temperature and Salainity files.
@@ -274,14 +312,13 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
 
     # Apply horizontal interpolation if requested
     if interpolate_missing and np.any(np.isnan(sound_velocity_profile)):
-        print('interpolating missing values')
+        # print('interpolating missing values')
         # Find valid indices
         sound_velocity_profile = sound_velocity_profile.flatten()
         mask = ~np.isnan(sound_velocity_profile)
         indices = np.arange(len(sound_velocity_profile.flatten()))
 
         valid_indices = indices[mask.flatten()]
-        valid_values = sound_velocity_profile[mask]
         # Only interpolate if we have at least 2 valid points
         if len(valid_indices) >= 2:
             valid_values = sound_velocity_profile[valid_indices]
@@ -291,7 +328,7 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
                                      fill_value="extrapolate")
             # Apply interpolation to the entire array
             sound_velocity_profile = f(indices).reshape(-1, 1)
-
+    sound_velocity_profile = np.squeeze(sound_velocity_profile)
     # Check for any remaining NaN values or unrealistic sound velocities
     if np.any(np.isnan(sound_velocity_profile)) or np.any(sound_velocity_profile < 100) or np.any(sound_velocity_profile > 1700):
         for i, c in enumerate(sound_velocity_profile.flatten()):
@@ -304,13 +341,15 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
         longitude=("points", lons),
         depth=depth,  method="nearest"
     ).values
+    sv_error_profile = np.squeeze(sv_error_profile)
+
     # This could be vectorized as:
     segment_lengths = np.array([geodesic(coordinates[i], coordinates[i+1]).meters for i in range(len(coordinates)-1)])
-    avg_velocities = 0.5 * (sound_velocity_profile[:,:-1] + sound_velocity_profile[:,1:])
+    avg_velocities = 0.5 * (sound_velocity_profile[..., :-1] + sound_velocity_profile[..., 1:])
     travel_time = np.sum(segment_lengths / avg_velocities)
-    avg_error = 0.5 * (sv_error_profile[:,:-1] + sv_error_profile[:,1:])
+    avg_error = 0.5 * (sv_error_profile[...,:-1] + sv_error_profile[...,1:])
     tt_segment_err = np.square((segment_lengths / avg_velocities ** 2) * avg_error)
-    tt_total_err = np.sqrt(np.sum(tt_segment_err))
+    tt_total_err = np.sqrt(np.nansum(tt_segment_err))
 
     if not hasattr(travel_time, '__len__'):
         travel_time = np.array([travel_time])
