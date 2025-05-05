@@ -17,7 +17,6 @@ def calculate_sound_velocity(ds, fast=True):
         # Create a 2D grid of depth (converted to negative z) and latitude.
         # Using 'ij' indexing means the first axis corresponds to depth and second axis to latitude.
         Z, LAT = np.meshgrid(-ds.depth.values, ds.latitude.values, indexing='ij')
-        lon_array = ds.longitude.values
         Z_3d, LAT_3d, LON_3d = xr.broadcast(
             xr.DataArray(Z, dims=['depth', 'latitude']),
             xr.DataArray(LAT, dims=['depth', 'latitude']),
@@ -74,11 +73,6 @@ def calculate_gsw_celerity_error(ds, sigma_P=0.1):
 
     # Calculate pressure from depth
     p = gsw.p_from_z(Z_3d, LAT_3d)
-
-    # Calculate base values
-    SA = gsw.SA_from_SP(ds.PSAL.values, p, LON_3d, LAT_3d)
-    CT = gsw.CT_from_t(SA, ds.TEMP.values, p)
-    C = gsw.sound_speed(SA, CT, p)
 
     # Define small deltas for finite difference calculations
     dT = 1e-2  # Small temperature difference (°C)
@@ -274,7 +268,7 @@ def extract_velocity_profile(ds, coordinates, method='nearest', interpolate_miss
     return temp_profile, temp_err, depth
 
 
-def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=True, interpolate_missing=False):
+def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=False, interpolate_missing=False):
     """
     Compute the travel time of a sound wave between two points at a given depth.
 
