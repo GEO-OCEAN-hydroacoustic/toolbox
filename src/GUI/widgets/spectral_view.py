@@ -36,6 +36,7 @@ class SpectralView(QtWidgets.QWidget):
         self.station = station
         station.load_data()
         self.manager = station.manager
+        self.waveform = False  # if true, displays the waveform instead of the spectrogram
         self.focused = True  # if true, this spectral_view is used for computations such as source location
 
         # min and max shown frequencies
@@ -232,15 +233,20 @@ class SpectralView(QtWidgets.QWidget):
         if self.start != start or self.end != end:
             self.start, self.end = start, end
             self.data = self.manager.get_segment(start, end)
-            (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
-
-            # label the time axis from -delta to +delta
-            extent = [min(t) - delta.total_seconds(), max(t) - delta.total_seconds(), min(f), max(f)]
             self.mpl.axes.cla()
-            self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="inferno")
+            extent = [-delta.total_seconds(), delta.total_seconds(), 0, self.manager.sampling_f/2]
+            if self.waveform:
+                self.mpl.axes.plot(np.linspace(extent[0], extent[1], len(self.data)), self.data)
+                self.mpl.axes.set_xlim(extent[0], extent[1])
+                self.mpl.axes.set_ylim(-np.max(np.abs(self.data)), np.max(np.abs(self.data)))
+            else:
+                (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
+                # label the time axis from -delta to +delta
+                self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="inferno")
+                self.mpl.axes.set_ylabel('f (Hz)')
+
             self.mpl.axes.axvline(0, color="w", alpha=0.25, linestyle="--")
             self.mpl.axes.set_xlabel('t (s)')
-            self.mpl.axes.set_ylabel('f (Hz)')
 
             # get previously picked events
             if self.station in self.spectralViewer.loc_res:
@@ -320,6 +326,10 @@ class SpectralView(QtWidgets.QWidget):
                                                self.segment_date_dateTimeEdit.time())
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
 
+
+        if key.key == 'shift':
+            # switch from spectro to waveform and vice-versa
+            self.waveform = not self.waveform
         if key.key == 'right':
             # go to right
             segment_center += delta
