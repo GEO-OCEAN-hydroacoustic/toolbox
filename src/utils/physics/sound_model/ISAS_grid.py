@@ -268,7 +268,7 @@ def extract_velocity_profile(ds, coordinates, method='nearest', interpolate_miss
     return temp_profile, temp_err, depth
 
 
-def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=False, interpolate_missing=False):
+def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=False, interpolate_missing=False, use_harmonic=True):
     """
     Compute the travel time of a sound wave between two points at a given depth.
 
