@@ -285,5 +285,8 @@ class SoundVelocityGrid(BidimensionalGrid):
         return scipy.stats.hmean(velocities)
 
     def get_sound_travel_time(self, pos1, pos2, date=None):
-        distance = geopy.distance.geodesic(pos1, pos2).m
+        # distance = geopy.distance.geodesic(pos1, pos2).m
+        from pyproj import Geod
+        geod = Geod(ellps="WGS84")
+        az12, az21, distance = geod.inv(pos1,pos2)
         return distance / self.get_sound_speed(pos1, pos2)
