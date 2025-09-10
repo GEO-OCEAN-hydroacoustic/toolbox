@@ -1,13 +1,12 @@
 import datetime
 import itertools
 from pathlib import Path
-
 import glob2
 import numpy as np
 import pandas as pd
 import yaml
 
-from utils.data_reading.sound_data.sound_file_manager import make_manager
+from src.utils.data_reading.sound_data.sound_file_manager import make_manager
 
 class Station:
     @property
