@@ -2,10 +2,12 @@ import xarray as xr
 import os
 import warnings
 import gsw
-warnings.filterwarnings('ignore')
 import numpy as np
 from geopy.distance import geodesic
+from pyproj import Geod
 from scipy import interpolate
+warnings.filterwarnings('ignore')
+geod = Geod(ellps="WGS84")
 
 def calculate_sound_velocity(ds, fast=True):
     # Sound velocity formula: Chen & Millero (1977)
@@ -183,6 +185,18 @@ def load_ISAS_TS(ISAS_Repertory, month,lat_bounds,lon_bounds, fast=True):
 
     return ds
 
+def load_ISAS_extracted(ISAS_Repertory, month):
+    arr = os.listdir(ISAS_Repertory)
+    # print(arr)
+    file_list = [os.path.join(ISAS_Repertory, fname) for fname in arr if fname.endswith('.nc')]
+    # print(file_list)
+    if month == "all":
+        return [xr.open_dataset(file_list[month - 1], engine='netcdf4', decode_times=False) for month in range(1, 13)]
+
+    ds = xr.open_dataset(file_list[month - 1], engine='netcdf4', decode_times=False)
+
+    return ds
+
 def _generate_coordinates_with_fixed_resolution(lat1, lon1, lat2, lon2, resolution):
     """
     Generate coordinates along the great-circle path between two points with fixed resolution.
@@ -216,13 +230,6 @@ def _generate_coordinates_with_fixed_resolution(lat1, lon1, lat2, lon2, resoluti
 
 def extract_velocity_profile(ds, coordinates, method='nearest', interpolate_missing=False):
     depth = ds['depth'].values
-    # temp_profile = np.full((len(depth), len(coordinates)), np.nan)
-    # temp_err = np.full((len(depth), len(coordinates)), np.nan)
-    # for i, (lat, lon) in enumerate(coordinates):
-    #     temp_at_point = ds.sel(latitude=lat, longitude=lon, method=method)['SOUND_VELOCITY']
-    #     temp_profile[:, i] = temp_at_point.values
-    #     temp_err_at_point = ds.sel(latitude=lat, longitude=lon, method=method)['SV_ERR']
-    #     temp_err[:, i] = temp_err_at_point.values
     # First extract all data points, even if they contain NaN values
     points = xr.Dataset({'latitude': (['points'], coordinates[:,0]),
                          'longitude': (['points'], coordinates[:,1])})
@@ -268,7 +275,7 @@ def extract_velocity_profile(ds, coordinates, method='nearest', interpolate_miss
     return temp_profile, temp_err, depth
 
 
-def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=False, interpolate_missing=False, use_harmonic=True):
+def compute_travel_time_at_depth(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbose=False, interpolate_missing=False, use_harmonic=True):
     """
     Compute the travel time of a sound wave between two points at a given depth.
 
@@ -294,9 +301,7 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
         lat1, lon1, lat2, lon2, resolution_m
     )
 
-    lats, lons = zip(*coordinates)
-    lats = np.array(lats)
-    lons = np.array(lons)
+    lats, lons = np.array([c[0] for c in coordinates]), np.array([c[1] for c in coordinates])
 
     sound_velocity_profile = ds['SOUND_VELOCITY'].interp(
         latitude=("points", lats),
@@ -337,8 +342,9 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
     ).values
     sv_error_profile = np.squeeze(sv_error_profile)
 
-    # This could be vectorized as:
-    segment_lengths = np.array([geodesic(coordinates[i], coordinates[i+1]).meters for i in range(len(coordinates)-1)])
+    # Distances entre points avec pyproj (vectorisé, rapide)
+    az12, az21, segment_lengths = geod.inv(lons[:-1], lats[:-1], lons[1:], lats[1:])
+
     avg_velocities = 0.5 * (sound_velocity_profile[..., :-1] + sound_velocity_profile[..., 1:])
     travel_time = np.sum(segment_lengths / avg_velocities)
     avg_error = 0.5 * (sv_error_profile[...,:-1] + sv_error_profile[...,1:])
@@ -358,3 +364,435 @@ def compute_travel_time(lat1, lon1, lat2, lon2, depth, ds, resolution=10, verbos
         print(f"Travel time error: {tt_total_err:.2f} s")
     return travel_time[-1], tt_total_err, total_distance
 
+
+def compute_travel_time(lat1, lon1, lat2, lon2, ds, resolution=10, verbose=False, interpolate_missing=False, use_harmonic=True):
+
+    resolution_m = resolution * 1000
+
+    # Generate coordinates along the great-circle path
+    coordinates, _, total_distance = _generate_coordinates_with_fixed_resolution(
+        lat1, lon1, lat2, lon2, resolution_m
+    )
+
+    lats, lons = zip(*coordinates)
+    lats = np.array(lats)
+    lons = np.array(lons)
+
+    sound_velocity_profile = ds['SOUND_VELOCITY'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),  method="nearest"
+    ).values
+
+    # Apply horizontal interpolation if requested
+    if interpolate_missing and np.any(np.isnan(sound_velocity_profile)):
+        # print('interpolating missing values')
+        # Find valid indices
+        sound_velocity_profile = sound_velocity_profile.flatten()
+        mask = ~np.isnan(sound_velocity_profile)
+        indices = np.arange(len(sound_velocity_profile.flatten()))
+
+        valid_indices = indices[mask.flatten()]
+        # Only interpolate if we have at least 2 valid points
+        if len(valid_indices) >= 2:
+            valid_values = sound_velocity_profile[valid_indices]
+            # Create interpolated values using numpy's interp function
+            f = interpolate.interp1d(valid_indices, valid_values,
+                                     bounds_error=False,  # Allow extrapolation
+                                     fill_value="extrapolate")
+            # Apply interpolation to the entire array
+            sound_velocity_profile = f(indices).reshape(-1, 1)
+    sound_velocity_profile = np.squeeze(sound_velocity_profile)
+    # Check for any remaining NaN values or unrealistic sound velocities
+    if np.any(np.isnan(sound_velocity_profile)) or np.any(sound_velocity_profile < 100) or np.any(sound_velocity_profile > 1700):
+        for i, c in enumerate(sound_velocity_profile.flatten()):
+            if np.isnan(c) or c < 100 or c > 1700:  # sanity check
+                lat, lon = coordinates[i]
+                return np.nan, np.nan, np.nan
+                raise ValueError(f"Unrealistic sound velocity ({c}) at lat={lat}, lon={lon}")
+
+    sv_error_profile = ds['SV_ERR'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),
+        method="nearest"
+    ).values
+    sv_error_profile = np.squeeze(sv_error_profile)
+
+    # This could be vectorized as:
+    segment_lengths = np.array([geodesic(coordinates[i], coordinates[i+1]).meters for i in range(len(coordinates)-1)])
+    avg_velocities = 0.5 * (sound_velocity_profile[..., :-1] + sound_velocity_profile[..., 1:])
+    travel_time = np.sum(segment_lengths / avg_velocities)
+    avg_error = 0.5 * (sv_error_profile[...,:-1] + sv_error_profile[...,1:])
+    tt_segment_err = np.square((segment_lengths / avg_velocities ** 2) * avg_error)
+    tt_total_err = np.sqrt(np.nansum(tt_segment_err))
+
+
+    if not hasattr(travel_time, '__len__'):
+        travel_time = np.array([travel_time])
+
+    # Verbose diagnostics
+    if verbose:
+        print(f"Total distance: {total_distance / 1000:.2f} km")
+        print(f"Segments: {len(segment_lengths)}")
+        print(
+            f"Velocity: mean={np.mean(sound_velocity_profile):.2f} m/s, min={np.min(sound_velocity_profile):.2f}, max={np.max(sound_velocity_profile):.2f}")
+        print(f"Travel time: {travel_time[-1]:.2f} s ({travel_time[-1] / 3600:.2f} hr)")
+        print(f"Travel time error: {tt_total_err:.2f} s")
+    return travel_time[-1], tt_total_err, total_distance
+
+
+
+def compute_harmonic_velocity_profile(lat1, lon1, lat2, lon2, ds, resolution=10, verbose=False, interpolate_missing=False):
+    """
+    Compute the harmonic velocity profile along a path - to be computed once and reused.
+
+    Parameters:
+    - lat1, lon1: Latitude and longitude of point A.
+    - lat2, lon2: Latitude and longitude of point B.
+    - depth: Depth (in meters) at which to compute sound velocity.
+    - ds: xarray.Dataset containing 'SOUND_VELOCITY' with dimensions (depth, latitude, longitude).
+    - resolution: Spacing in km between points along the geodesic path.
+    - verbose: If True, prints diagnostics.
+    - interpolate_missing: If True, interpolates horizontally to fill missing values.
+
+    Returns:
+    - harmonic_velocity: Harmonic mean velocity for the entire path (m/s).
+    - total_distance: Total distance in meters.
+    - velocity_error: Propagated error on harmonic velocity.
+    """
+
+    # Convert resolution to meters
+    resolution_m = resolution * 1000
+
+    # Generate coordinates along the great-circle path
+    coordinates, _, total_distance = _generate_coordinates_with_fixed_resolution(
+        lat1, lon1, lat2, lon2, resolution_m
+    )
+
+    lats, lons = zip(*coordinates)
+    lats = np.array(lats)
+    lons = np.array(lons)
+
+    sound_velocity_profile = ds['SOUND_VELOCITY'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),  method="nearest"
+    ).values
+
+    # Apply horizontal interpolation if requested
+    if interpolate_missing and np.any(np.isnan(sound_velocity_profile)):
+        # print('interpolating missing values')
+        # Find valid indices
+        sound_velocity_profile = sound_velocity_profile.flatten()
+        mask = ~np.isnan(sound_velocity_profile)
+        indices = np.arange(len(sound_velocity_profile.flatten()))
+
+        valid_indices = indices[mask.flatten()]
+        # Only interpolate if we have at least 2 valid points
+        if len(valid_indices) >= 2:
+            valid_values = sound_velocity_profile[valid_indices]
+            # Create interpolated values using numpy's interp function
+            f = interpolate.interp1d(valid_indices, valid_values,
+                                     bounds_error=False,  # Allow extrapolation
+                                     fill_value="extrapolate")
+            # Apply interpolation to the entire array
+            sound_velocity_profile = f(indices).reshape(-1, 1)
+    sound_velocity_profile = np.squeeze(sound_velocity_profile)
+    # Check for any remaining NaN values or unrealistic sound velocities
+    if np.any(np.isnan(sound_velocity_profile)) or np.any(sound_velocity_profile < 100) or np.any(sound_velocity_profile > 1700):
+        for i, c in enumerate(sound_velocity_profile.flatten()):
+            if np.isnan(c) or c < 100 or c > 1700:  # sanity check
+                lat, lon = coordinates[i]
+                return np.nan, np.nan, np.nan
+                raise ValueError(f"Unrealistic sound velocity ({c}) at lat={lat}, lon={lon}")
+
+    sv_error_profile = ds['SV_ERR'].interp(
+        latitude=("points", lats),
+        longitude=("points", lons),
+        method="nearest"
+    ).values
+    sv_error_profile = np.squeeze(sv_error_profile)
+
+    # This could be vectorized as:
+    segment_lengths = np.array([geodesic(coordinates[i], coordinates[i+1]).meters for i in range(len(coordinates)-1)])
+
+    # Calculate average velocities and errors for each segment
+    avg_velocities = 0.5 * (sound_velocity_profile[:-1] + sound_velocity_profile[1:])
+    avg_errors = 0.5 * (sv_error_profile[:-1] + sv_error_profile[1:])
+
+    # Compute harmonic mean velocity weighted by segment lengths
+    # Harmonic mean: 1/v_harm = sum(L_i / v_i) / sum(L_i)
+    # So: v_harm = sum(L_i) / sum(L_i / v_i)
+    harmonic_velocity = total_distance / np.sum(segment_lengths / avg_velocities)
+
+    # Error propagation for harmonic velocity
+    # Using delta method: if v_harm = D / sum(L_i/v_i), then
+    # σ²(v_harm) = (∂v_harm/∂v_i)² * σ²(v_i) summed over i
+    # ∂v_harm/∂v_i = D * L_i / (v_i² * (sum(L_j/v_j))²)
+    sum_L_over_v = np.sum(segment_lengths / avg_velocities)
+    velocity_variance = 0
+    for i in range(len(avg_velocities)):
+        if not np.isnan(avg_errors[i]):
+            dv_harm_dv_i = total_distance * segment_lengths[i] / (avg_velocities[i]**2 * sum_L_over_v**2)
+            velocity_variance += (dv_harm_dv_i * avg_errors[i])**2
+
+    velocity_error = np.sqrt(velocity_variance)
+
+    if verbose:
+        print(f"Total distance: {total_distance / 1000:.2f} km")
+        print(f"Segments: {len(segment_lengths)}")
+        print(f"Velocity: mean={np.mean(avg_velocities):.2f} m/s, harmonic={harmonic_velocity:.2f} m/s")
+        print(f"Harmonic velocity error: {velocity_error:.2f} m/s")
+
+    return harmonic_velocity, total_distance, velocity_error
+
+
+def compute_travel_time_from_harmonic_velocity(harmonic_velocity, total_distance, velocity_error=0):
+    """
+    Compute travel time using pre-computed harmonic velocity - fast function for iterations.
+
+    Parameters:
+    - harmonic_velocity: Harmonic mean velocity (m/s).
+    - total_distance: Total distance in meters.
+    - velocity_error: Error on harmonic velocity (m/s).
+
+    Returns:
+    - travel_time: Total travel time in seconds.
+    - travel_time_error: Error on travel time in seconds.
+    """
+    travel_time = total_distance / harmonic_velocity
+
+    # Error propagation: if t = D/v, then σ(t) = D/v² * σ(v)
+    travel_time_error = total_distance / (harmonic_velocity ** 2) * velocity_error
+
+    return travel_time, travel_time_error
+
+
+def compute_travel_time_optimized(lat1, lon1, lat2, lon2, ds, resolution=10, verbose=False, interpolate_missing=False, use_harmonic=True):
+    """
+    Wrapper function that maintains the same interface as the original function.
+    For least squares optimization, use the separated functions above.
+    """
+    if use_harmonic:
+        harmonic_velocity, total_distance, velocity_error = compute_harmonic_velocity_profile(
+            lat1, lon1, lat2, lon2, ds, resolution, verbose, interpolate_missing
+        )
+        travel_time, travel_time_error = compute_travel_time_from_harmonic_velocity(
+            harmonic_velocity, total_distance, velocity_error
+        )
+        return travel_time, travel_time_error, total_distance
+    else:
+        # Fall back to original method if needed
+        return compute_travel_time(lat1, lon1, lat2, lon2, ds, resolution, verbose, interpolate_missing, use_harmonic=False)
+
+import numpy as np
+import xarray as xr
+from tqdm import tqdm
+import os
+from joblib import Parallel, delayed
+
+def create_harmonic_velocity_grid(ds, stations_dict, grid_lat, grid_lon, depth,
+                                  resolution=10, output_file=None, n_jobs=-1):
+    """
+    Pré-calcule une grille NetCDF avec les vitesses harmoniques pour tous les trajets
+    source-station possibles.
+
+    Parameters:
+    - ds: Dataset ISAS avec SOUND_VELOCITY
+    - stations_dict: Dict {'station_name': (lat, lon)}
+    - grid_lat: Array des latitudes de grille
+    - grid_lon: Array des longitudes de grille
+    - depth: Profondeur en mètres
+    - resolution: Résolution le long des trajets (km)
+    - output_file: Chemin de sauvegarde NetCDF
+    - n_jobs: Nombre de processeurs (-1 pour tous)
+
+    Returns:
+    - xr.Dataset avec les vitesses harmoniques pré-calculées
+    """
+
+    station_names = list(stations_dict.keys())
+    n_stations = len(station_names)
+    n_lat = len(grid_lat)
+    n_lon = len(grid_lon)
+
+    print(f"Création grille {n_lat}x{n_lon} pour {n_stations} stations à profondeur {depth}m")
+
+    # Initialisation des arrays de résultats
+    harmonic_velocities = np.full((n_stations, n_lat, n_lon), np.nan)
+    distances = np.full((n_stations, n_lat, n_lon), np.nan)
+    velocity_errors = np.full((n_stations, n_lat, n_lon), np.nan)
+
+    def compute_single_trajectory(station_idx, source_lat_idx, source_lon_idx):
+        """Calcule vitesse harmonique pour un trajet source-station"""
+        try:
+            station_name = station_names[station_idx]
+            station_lat, station_lon = stations_dict[station_name]
+            source_lat = grid_lat[source_lat_idx]
+            source_lon = grid_lon[source_lon_idx]
+
+            # Utilise votre fonction modifiée
+            harmonic_velocity, total_distance, velocity_error = compute_harmonic_velocity_profile(
+                source_lat, source_lon, station_lat, station_lon,
+                depth, ds, resolution, verbose=False, interpolate_missing=True
+            )
+
+            return station_idx, source_lat_idx, source_lon_idx, harmonic_velocity, total_distance, velocity_error
+
+        except Exception as e:
+            # En cas d'erreur, retourne NaN
+            return station_idx, source_lat_idx, source_lon_idx, np.nan, np.nan, np.nan
+
+    # Génère toutes les combinaisons à calculer
+    tasks = []
+    for station_idx in range(n_stations):
+        for lat_idx in range(n_lat):
+            for lon_idx in range(n_lon):
+                tasks.append((station_idx, lat_idx, lon_idx))
+
+    print(f"Calcul de {len(tasks)} trajectoires...")
+
+    # Calcul parallèle avec barre de progression
+    results = Parallel(n_jobs=n_jobs, verbose=1)(
+        delayed(compute_single_trajectory)(s_idx, lat_idx, lon_idx)
+        for s_idx, lat_idx, lon_idx in tqdm(tasks, desc="Calcul trajectoires")
+    )
+
+    # Remplit les arrays de résultats
+    for station_idx, lat_idx, lon_idx, h_vel, dist, v_err in results:
+        harmonic_velocities[station_idx, lat_idx, lon_idx] = h_vel
+        distances[station_idx, lat_idx, lon_idx] = dist
+        velocity_errors[station_idx, lat_idx, lon_idx] = v_err
+
+    # Création du Dataset xarray
+    coords = {
+        'station': station_names,
+        'latitude': grid_lat,
+        'longitude': grid_lon
+    }
+
+    data_vars = {
+        'harmonic_velocity': (['station', 'latitude', 'longitude'], harmonic_velocities),
+        'distance': (['station', 'latitude', 'longitude'], distances),
+        'velocity_error': (['station', 'latitude', 'longitude'], velocity_errors)
+    }
+
+    attrs = {
+        'title': 'Grille vitesses harmoniques pré-calculées',
+        'depth_meters': depth,
+        'resolution_km': resolution,
+        'creation_date': str(np.datetime64('now'))
+    }
+
+    grid_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+
+    # Sauvegarde si demandé
+    if output_file:
+        print(f"Sauvegarde vers {output_file}")
+        grid_ds.to_netcdf(output_file, engine='netcdf4')
+
+    return grid_ds
+
+def load_precomputed_grid(grid_file):
+    """Charge une grille pré-calculée"""
+    return xr.open_dataset(grid_file)
+
+def fast_travel_time_from_grid(grid_ds, station_name, source_lat, source_lon,
+                               interpolation='linear'):
+    """
+    Calcul ultra-rapide du temps de trajet depuis la grille pré-calculée
+
+    Parameters:
+    - grid_ds: Dataset avec grilles pré-calculées
+    - station_name: Nom de la station
+    - source_lat, source_lon: Coordonnées de la source
+    - interpolation: 'linear' ou 'nearest'
+
+    Returns:
+    - travel_time, travel_time_error
+    """
+
+    # Interpolation bilinéaire/nearest dans la grille
+    harmonic_vel = grid_ds['harmonic_velocity'].interp(
+        station=station_name,
+        latitude=source_lat,
+        longitude=source_lon,
+        method=interpolation
+    ).values
+
+    distance = grid_ds['distance'].interp(
+        station=station_name,
+        latitude=source_lat,
+        longitude=source_lon,
+        method=interpolation
+    ).values
+
+    velocity_error = grid_ds['velocity_error'].interp(
+        station=station_name,
+        latitude=source_lat,
+        longitude=source_lon,
+        method=interpolation
+    ).values
+
+    # Calcul temps de trajet
+    travel_time = distance / harmonic_vel
+    travel_time_error = distance / (harmonic_vel ** 2) * velocity_error
+
+    return float(travel_time), float(travel_time_error)
+
+# Fonction optimisée pour remplacer compute_travel_time dans vos moindres carrés
+def compute_travel_time_optimized_grid(lat, lon, station_lat, station_lon, month,
+                                       grid_cache, station_name=None):
+    """
+    Version ultra-optimisée utilisant la grille pré-calculée
+    Compatible avec votre interface existante
+    """
+
+    # Récupère la grille du mois depuis le cache
+    grid_key = f'harmonic_grid_{month}'
+    if grid_key not in grid_cache:
+        # Charge la grille pour ce mois (à faire une seule fois)
+        grid_file = f"/path/to/your/grids/harmonic_grid_month_{month}.nc"
+        grid_cache[grid_key] = load_precomputed_grid(grid_file)
+
+    grid_ds = grid_cache[grid_key]
+
+    # Si on n'a pas le nom de station, trouve la plus proche
+    if station_name is None:
+        # Trouve la station la plus proche dans la grille
+        distances = []
+        for stn in grid_ds.station.values:
+            # Tu devras avoir un mapping station -> coordonnées quelque part
+            stn_coords = get_station_coords(stn)  # À implémenter
+            dist = geod.inv(station_lon, station_lat, stn_coords[1], stn_coords[0])[2]
+            distances.append(dist)
+        station_name = grid_ds.station.values[np.argmin(distances)]
+
+    # Calcul ultra-rapide
+    travel_time, travel_time_error = fast_travel_time_from_grid(
+        grid_ds, station_name, lat, lon
+    )
+
+    # Distance (pour compatibilité)
+    _, _, distance = geod.inv(lon, lat, station_lon, station_lat)
+
+    return travel_time, travel_time_error, distance
+
+# Exemple d'usage pour créer les grilles
+def create_monthly_grids(stations_dict, grid_bounds, grid_size, depth=1250):
+    """
+    Crée les grilles pour tous les mois de l'année
+    """
+    lat_grid = np.linspace(grid_bounds[0], grid_bounds[1], grid_size)
+    lon_grid = np.linspace(grid_bounds[2], grid_bounds[3], grid_size)
+
+    for month in range(1, 13):
+        print(f"Traitement mois {month}")
+
+        # Charge les données ISAS pour ce mois
+        ds = get_isas_data(month)
+
+        # Crée la grille
+        grid_file = f"harmonic_grid_month_{month}.nc"
+        create_harmonic_velocity_grid(
+            ds, stations_dict, lat_grid, lon_grid, depth,
+            output_file=grid_file, n_jobs=-1
+        )
