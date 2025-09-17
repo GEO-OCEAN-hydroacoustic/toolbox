@@ -1,5 +1,7 @@
 import numpy as np
 from pyproj import Geod
+import datetime
+from scipy.optimize import least_squares
 from utils.physics.sound_model.sound_model import SoundModel
 from utils.physics.sound_model.sound_velocity_grid import SoundVelocityGrid
 
@@ -201,6 +203,9 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
     def get_sound_speed(self, source, sensor, date=None):
         return self.models[date.month - 1].get_sound_speed(source, sensor)
 
+    def get_sound_speed_with_uncertainty(self, source, sensor, date=None):
+        return self.models[date.month - 1].get_sound_speed_with_uncertainty(source, sensor)
+
     def localize_common_source(self, sensors_positions, detection_times, x_min=-90, y_min=-180, x_max=90,
                              y_max=180, t_min=-36_000, initial_pos=None, velocities=None):
         return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
@@ -213,19 +218,14 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
         lon_maxs = [model.lon_bounds[1] for model in self.models]
         return min(lat_mins), max(lat_maxs), min(lon_mins), max(lon_maxs)
 
-
-import numpy as np
-from scipy.optimize import least_squares
-from datetime import datetime, timedelta
-from tqdm import tqdm
-
-
-class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
-    """
-    Extension du modèle ellipsoïdal avec pondération par les incertitudes
-    """
-    def __init__(self):
-        super().__init__()
+#
+# class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
+#     """
+#     Extension du modèle ellipsoïdal avec pondération par les incertitudes
+#     """
+#
+#     def __init__(self):
+#         super().__init__()
 
     def _compute_observation_weights(self, sensors_positions, detection_times, velocities,
                                      drift_uncertainties=None, pick_uncertainties=None,
@@ -238,7 +238,7 @@ class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
         sensors_positions : array-like, positions des capteurs [(lat, lon), ...]
         detection_times : array-like, temps de détection
         velocities : array-like, vitesses du son
-        drift_uncertainties : array-like, incertitudes de position des capteurs en mètres
+        drift_uncertainties : array-like, incertitudes of time drift
         pick_uncertainties : array-like, incertitudes de picking en secondes
         velocity_uncertainties : array-like, incertitudes de vitesse en m/s
         source_position : tuple, position estimée de la source (lat, lon)
@@ -256,7 +256,7 @@ class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
         if pick_uncertainties is None:
             pick_uncertainties = np.full(n_sensors, 0.01)  # 10ms par défaut
         if velocity_uncertainties is None:
-            velocity_uncertainties = np.full(n_sensors, 10.0)  # 10 m/s par défaut
+            velocity_uncertainties = np.full(n_sensors, 1.0)  # 1 m/s par défaut
 
         # Position de source approximative si non fournie
         if source_position is None:
@@ -271,7 +271,7 @@ class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
         for i in range(n_equations):
             # Index des capteurs (i+1 vs référence 0)
             ref_idx = 0
-            sensor_idx = i + 1
+            sensor_idx = i
 
             # 1. Variance due à l'incertitude de picking (TDOA)
             var_pick = pick_uncertainties[ref_idx] ** 2 + pick_uncertainties[sensor_idx] ** 2
@@ -285,10 +285,10 @@ class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
             var_velocity = var_velocity_ref + var_velocity_sensor
 
             # 3. Variance due à l'incertitude de position (dérive)
-            # Approximation: σ²(t) ≈ (1/v)² * σ²(d)
-            # où σ(d) est l'incertitude sur la distance due à la dérive
-            var_drift_ref = (drift_uncertainties[ref_idx] / velocities[ref_idx]) ** 2
-            var_drift_sensor = (drift_uncertainties[sensor_idx] / velocities[sensor_idx]) ** 2
+            # où σ(d) est l'incertitude sur la distance due à la dérive d'horloge
+
+            var_drift_ref = (drift_uncertainties[ref_idx] ) ** 2
+            var_drift_sensor = (drift_uncertainties[sensor_idx]) ** 2
             var_drift = var_drift_ref + var_drift_sensor
 
             # Variance totale
@@ -406,13 +406,21 @@ class WeightedEllipsoidalSoundModel(EllipsoidalSoundModel):
         # Position initiale
         if initial_pos is None:
             initial_pos = list(np.mean(sensors_positions, axis=0))
-        else:
-            initial_pos = list(initial_pos[1:])  # Retirer t0 si présent
+        else :
+            print('initial pos ', initial_pos)
+            if len(initial_pos) == 2 :
+                initial_pos = list(initial_pos)
+            if len(initial_pos) == 3 :
+                initial_pos = list(initial_pos[1:])  # Retirer t0 si présent
 
         # Vitesses
+        # if velocities is None:
+        #     velocities = [self.get_sound_speed(initial_pos, p, detection_times[min_date])
+        #                   for p in sensors_positions]
         if velocities is None:
-            velocities = [self.get_sound_speed(initial_pos, p, detection_times[min_date])
+            velocities = [self.get_sound_speed_with_uncertainty(initial_pos, p, detection_times[min_date])
                           for p in sensors_positions]
+            velocities, velocity_uncertainties = np.array(velocities)[:,0], np.array(velocities)[:,1]
 
         # Temps relatifs
         detection_times_rel = np.array([(d - detection_times[min_date]).total_seconds()

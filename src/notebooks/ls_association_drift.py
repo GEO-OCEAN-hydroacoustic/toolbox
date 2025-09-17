@@ -25,20 +25,18 @@ import pickle
 import warnings
 
 # === CONFIGURATION ===
-# ASSO_FILE = "/media/rsafran/CORSAIR/Association/2018/grids/2018/s_-60-5,35-120,350,0.8,0.6.npy"
-ASSO_FILE = "/media/rsafran/CORSAIR/Association/2018/grids/2018/refined_s_-60-5,35-120,350,0.8,0.6.npy"
+ASSO_FILE = "/home/rsafran/PycharmProjects/toolbox/data/detection/association/grids/refined_s_-60-5,35-120,400,0.8,0.6-part0.npy"
 OUTPUT_DIR = "/media/rsafran/CORSAIR/Association/validated"
 OUTPUT_BASENAME = "refined_s_-60-5,35-120,350,0.8,0.6"
 BATCH_SIZE = 250  # checkpoint every N dates
 N_JOBS = max(1, os.cpu_count() - 1)  # leave one core free
 GRID_LAT_BOUNDS = [-60, 5]
 GRID_LON_BOUNDS = [35, 120]
-GRID_SIZE = 350
-DEPTH = 1250  # meters
+GRID_SIZE = 400
 SOUND_SPEED = 1480  # m/s, rough constant
-GTOL = 1e-4
-XTOL = 1e-4
-ISAS_PATH = "/media/rsafran/CORSAIR/ISAS/86442/field/2018"
+GTOL = 1e-5
+XTOL = 1e-5
+ISAS_PATH = "/media/rsafran/CORSAIR/ISAS/exctracted/2018"
 
 # Enhanced error model parameters
 PICKING_ERROR_BASE = 2  # Base picking error in seconds
@@ -76,22 +74,18 @@ def log_progress(message):
     memory_usage = process.memory_info().rss / 1024 / 1024  # MB
     print(f"[{elapsed:.1f}s | {memory_usage:.1f}MB] {message}")
 
-
 # === INITIALIZATION ===
-
 # Precompute grid lat/lon
 PTS_LAT = np.linspace(*GRID_LAT_BOUNDS, GRID_SIZE)
 PTS_LON = np.linspace(*GRID_LON_BOUNDS, GRID_SIZE)
 
 # Geod instance for geodesic calculations
 geod = Geod(ellps="WGS84")
-
 # Setup memory caching
 memory_cache = Memory(location=os.path.join(OUTPUT_DIR, "joblib_cache"), verbose=0)
 
 
 # === ISAS DATA LOADING ===
-
 def get_isas_data(month):
     """Load ISAS data with file-based caching to avoid serialization issues"""
     cache_file = os.path.join(CACHE_DIR, f"isas_month_{month}.pkl")
@@ -107,8 +101,8 @@ def get_isas_data(month):
 
     # Generate the data
     print(f"Loading ISAS data for month {month}...")
-    data = isg.load_ISAS_TS(
-        ISAS_PATH, month, GRID_LAT_BOUNDS, GRID_LON_BOUNDS, fast=False
+    data = isg.load_ISAS_extracted(
+        ISAS_PATH, month
     )
 
     # Cache the result to file
@@ -129,12 +123,6 @@ def grid_index_to_coord(indices):
 
 def compute_travel_time(lat, lon, station_lat, station_lon, month, travel_time_cache):
     """Compute travel time with process-local dictionary caching"""
-    # Round coordinates to reduce cache explosion
-    # (4 decimal places is about 11 meters precision)
-    # lat = round(lat, 4)
-    # lon = round(lon, 4)
-    # station_lat = round(station_lat, 4)
-    # station_lon = round(station_lon, 4)
 
     # Using provided cache dictionary
     key = (lat, lon, station_lat, station_lon, month)
@@ -147,8 +135,8 @@ def compute_travel_time(lat, lon, station_lat, station_lon, month, travel_time_c
 
             tt, err, dist_m = isg.compute_travel_time(
                 lat, lon, station_lat, station_lon,
-                DEPTH, ds,
-                resolution=20,
+                ds,
+                resolution=10,
                 verbose=False,
                 interpolate_missing=True
             )
@@ -165,6 +153,79 @@ def compute_travel_time(lat, lon, station_lat, station_lon, month, travel_time_c
 
     return travel_time_cache[key]
 
+
+geod = Geod(ellps="WGS84")
+
+def theoretical_derivatives(lat1, lon1, lat2, lon2):
+    """
+    Compute derivatives of geodesic distance with respect to endpoint 2
+    All inputs must be scalars or same-sized arrays
+    Returns: ds/dlat2, ds/dlon2 in meters per radian
+    """
+    # Get geodesic parameters - all inputs must have same shape
+    fwd_azi, back_azi, distance = geod.inv(lon1, lat1, lon2, lat2)
+
+    # Convert to radians
+    lat2_rad = np.radians(lat2)
+    # Use back azimuth at point 2 (azi2 in our notation)
+    azi2_rad = np.radians(back_azi)
+
+    # WGS84 parameters
+    a = geod.a  # semi-major axis
+    f = geod.f  # flattening
+    e2 = f * (2 - f)  # first eccentricity squared
+
+    # Trigonometric components
+    sin_lat2 = np.sin(lat2_rad)
+    cos_lat2 = np.cos(lat2_rad)
+    sin_azi2 = np.sin(azi2_rad)
+    cos_azi2 = np.cos(azi2_rad)
+
+    # Radii of curvature at point 2
+    nu2 = 1 - e2 * sin_lat2**2
+    N2 = a / np.sqrt(nu2)  # Normal radius (east-west)
+    M2 = a * (1 - e2) / (nu2**1.5)  # Meridional radius (north-south)
+
+    # Derivatives in meters per radian
+    ds_dlat2 = M2 * cos_azi2  # ρ₂ cos(α₂)
+    ds_dlon2 = N2 * cos_lat2 * sin_azi2  # ν₂ cos(φ₂) sin(α₂)
+
+    return ds_dlat2, ds_dlon2
+
+def jacobian_tdoa(receivers_lat, receivers_lon, source_lat, source_lon):
+    """
+    Compute Jacobian matrix for TDOA system using vectorized operations
+    """
+    n_receivers = len(receivers_lat)
+
+    # Create arrays with same size for geod.inv
+    source_lat_array = np.full(n_receivers, source_lat)
+    source_lon_array = np.full(n_receivers, source_lon)
+
+    # Compute all derivatives at once using vectorization
+    dsi_dlat, dsi_dlon = theoretical_derivatives(
+        source_lat_array, source_lon_array,  # source positions (repeated)
+        receivers_lat, receivers_lon         # all receiver positions
+    )
+
+    # Reference receiver derivatives (index 0)
+    ds0_dlat = dsi_dlat[0]
+    ds0_dlon = dsi_dlon[0]
+
+    # Build Jacobian matrix
+    J = np.zeros((n_receivers, 2))
+
+    for i in range(n_receivers):
+        if i == 0:
+            # Reference receiver: s_0 - s_0 = 0
+            J[i, 0] = 0.0
+            J[i, 1] = 0.0
+        else:
+            # Difference derivatives: ∂(s_i - s_0)/∂source
+            J[i, 0] = dsi_dlat[i] - ds0_dlat  # ∂(s_i - s_0)/∂lat
+            J[i, 1] = dsi_dlon[i] - ds0_dlon  # ∂(s_i - s_0)/∂lon
+
+    return J
 
 def has_unknown_drift(station_name):
     """Check if station has unknown drift"""
@@ -319,6 +380,15 @@ def process_date(date, associations_list):
             # Return normalized residuals
             return residuals / sigmas
 
+        def tdoa_jac(params):
+            lat, lon = params
+            n_receivers = len(tdoa_pairs)
+            receivers_lat = np.array([pos[0] for _, pos, _, _ in tdoa_pairs])
+            receivers_lon = np.array([pos[1] for _, pos, _, _ in tdoa_pairs])
+            # Compute geometric derivatives (meters per radian)
+            J_geom = jacobian_tdoa(receivers_lat, receivers_lon, lat, lon)
+            return np.array(J_geom)
+
         # Initial parameter guess and bounds for TDOA approach (only position)
         x0 = [lat0, lon0]
         bounds = (
@@ -330,14 +400,14 @@ def process_date(date, associations_list):
         try:
             # Use a more efficient optimization strategy
             res = least_squares(
-                tdoa_residual, x0, bounds=bounds,
+                tdoa_residual, x0, tdoa_jac, bounds=bounds,
                 method='trf', loss='soft_l1',  # Robust against outliers
                 f_scale=2.5,
                 gtol=GTOL, xtol=XTOL,
                 max_nfev=100,  # Limit number of function evaluations
-                verbose=VERBOSE_OPTIMIZATION
-            )
+                verbose=VERBOSE_OPTIMIZATION)
         except Exception as e:
+            print(e)
             # Just skip problematic optimizations
             continue
 
@@ -715,6 +785,8 @@ def main():
     log_progress(f"Loading associations from {ASSO_FILE}")
     associations = np.load(ASSO_FILE, allow_pickle=True).item()
     items = list(associations.items())
+    print("Nb associations chargées :", len(associations))
+
     total_items = len(items)
     log_progress(f"Found {total_items} date entries to process")
 
