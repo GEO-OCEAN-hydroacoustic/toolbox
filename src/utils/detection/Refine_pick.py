@@ -20,13 +20,13 @@ from utils.data_reading.sound_data.station import StationsCatalog
 # paths
 CATALOG_PATH = "/media/rsafran/CORSAIR/OHASISBIO/recensement_stations_OHASISBIO_RS.csv"
 # DETECTIONS_DIR = "/media/rsafran/CORSAIR/temp/2018"
-DETECTIONS_DIR = "/home/rsafran/Bureau/tissnet/2018"
+DETECTIONS_DIR = "/media/rsafran/CORSAIR/detections_CTBT/"
 ASSOCIATION_OUTPUT_DIR = "../../../data/detection/association"
 
 # Detections loading parameters
 RELOAD_DETECTIONS = False # if False, load files called "detections.npy" and "detections_merged.npy" containing everything instead of the raw detection output. Leave at True by default
-MIN_P_TISSNET_PRIMARY = 0.8  # min probability of browsed detections
-MIN_P_TISSNET_SECONDARY = 0.6  # min probability of detections that can be associated with the browsed one
+MIN_P_TISSNET_PRIMARY = 0.5  # min probability of browsed detections
+MIN_P_TISSNET_SECONDARY = 0.15  # min probability of detections that can be associated with the browsed one
 MERGE_DELTA_S = 10 # threshold below which we consider two events should be merged
 MERGE_DELTA = timedelta(seconds=MERGE_DELTA_S)
 
@@ -37,11 +37,11 @@ REQ_CLOSEST_STATIONS = 0  # The REQ_CLOSEST_STATIONS th closest stations will be
 # Root directory containing subfolders for each station
 DATA_ROOT = "/media/rsafran/CORSAIR/OHASISBIO"
 # Subfolder (e.g. year) within DATA_ROOT
-DATASET   = "2018"
+DATASET   = "OHASISBIO-2018"
 # Where to save the refined detections
 OUTPUT_FILE = "/home/rsafran/Bureau/tissnet/2018/cache/refined_detections_merged.npy"
 # Number of parallel workers (adjust to CPU cores)
-WORKERS = 27
+WORKERS = 1
 
 # Signal processing parameters
 SAMPLING_RATE = 240    # Hz (override if your DatFilesManager provides a different rate)
@@ -88,15 +88,15 @@ def refine_single_detection(station_obj, det_time):
     Returns a dict or None on failure.
     """
     # load waveform ±3 minutes
-    start = det_time - timedelta(minutes=1)
-    end   = det_time + timedelta(minutes=1)
+    start = det_time - timedelta(minutes=1.5)
+    end   = det_time + timedelta(minutes=1.5)
     try :
         raw = 'raw' if station_obj.name in drift_raw else 'raw'
         mgr = DatFilesManager(f"{DATA_ROOT}/{DATASET}/{station_obj.name}", kwargs=raw)
         data = mgr.get_segment(start, end)
     except Exception as e:
         raw = 'raw' if station_obj.name in drift_raw else 'raw'
-        mgr = DatFilesManager(f"{DATA_ROOT}/{2017}/{station_obj.name}",kwargs=raw)
+        mgr = DatFilesManager(f"{DATA_ROOT}/{'OHASISBIO-2017'}/{station_obj.name}",kwargs=raw)
         data = mgr.get_segment(start, end)
     # energy envelope
     fs = getattr(mgr, 'sampling_rate', SAMPLING_RATE)
@@ -148,6 +148,7 @@ def process_associations():
 
     if RELOAD_DETECTIONS:
         det_files = [f for f in glob2.glob(DETECTIONS_DIR + "/*") if Path(f).is_file()]
+        det_files = [f for f in det_files if "2018" in f]
         DETECTIONS, DETECTIONS_MERGED = load_detections(det_files, STATIONS, DETECTIONS_DIR, MIN_P_TISSNET_PRIMARY,
                                                         MIN_P_TISSNET_SECONDARY, MERGE_DELTA)
     else:
@@ -157,8 +158,9 @@ def process_associations():
     tasks = []
 
     for det_time, _, station_obj in DETECTIONS_MERGED:
-        tasks.append((station_obj, det_time))
-
+        if "OHASISBIO" in station_obj.dataset :
+            tasks.append((station_obj, det_time))
+    print(len(tasks))
     # right after you build tasks = [...]
     toy = tasks[:10]
 
@@ -168,7 +170,7 @@ def process_associations():
         print(raw)
         start = det_time - timedelta(minutes=1)
         end = det_time + timedelta(minutes=1)
-        mgr = DatFilesManager(f"{DATA_ROOT}/{2018}/{station_obj.name}",raw)
+        mgr = DatFilesManager(f"{DATA_ROOT}/{"OHASISBIO-2018"}/{station_obj.name}",raw)
         data = mgr.get_segment(start, end)
 
         # 2) compute envelope
@@ -222,22 +224,22 @@ def process_associations():
                 pbar.update(1)
 
 
-    # results_map = {
-    #     (r['station'], r['orig_time']): r['refined_time']
-    #     for r in results
-    # }
-    #
-    # refined_detections_merged = DETECTIONS_MERGED.copy()
-    # for i, (det_time, _, station_obj) in enumerate(refined_detections_merged):
-    #     key = (station_obj.name, det_time)
-    #     new_time = results_map.get(key, det_time)
-    #     refined_detections_merged[i][0]=new_time
-    #
-    #
-    #
-    # print(f"Saving refined detections to {OUTPUT_FILE}...")
-    # np.save(OUTPUT_FILE, refined_detections_merged)
-    # print("Done.")
+    results_map = {
+        (r['station'], r['orig_time']): r['refined_time']
+        for r in results
+    }
+
+    refined_detections_merged = DETECTIONS_MERGED.copy()
+    for i, (det_time, _, station_obj) in enumerate(refined_detections_merged):
+        key = (station_obj.name, det_time)
+        new_time = results_map.get(key, det_time)
+        refined_detections_merged[i][0]=new_time
+
+
+
+    print(f"Saving refined detections to {OUTPUT_FILE}...")
+    np.save(OUTPUT_FILE, refined_detections_merged)
+    print("Done.")
 
 
 if __name__ == '__main__':

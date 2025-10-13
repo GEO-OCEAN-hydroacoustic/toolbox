@@ -53,11 +53,11 @@ class SoundModel():
         min_date = np.argmin(detection_times)
 
         x0 = self._define_x0(initial_pos, sensors_positions, detection_times, min_date)
-
+        t0 = detection_times[min_date]
         if velocities is None:
             velocities = [self.get_sound_speed(x0[1:], p, detection_times[min_date]) for p in sensors_positions]
 
-        detection_times = np.array([(d-detection_times[min_date]).total_seconds() for d in detection_times])
+        detection_times = np.array([(d-t0).total_seconds() for d in detection_times])
         x0[1:] = self._transform_coordinates(x0[1:])
 
         sensors_positions = np.array([self._transform_coordinates(p) for p in sensors_positions])
@@ -68,12 +68,12 @@ class SoundModel():
 
         f = self._get_cost_function(sensors_positions, detection_times, velocities)
         jacobian = self._get_jacobian_function(sensors_positions, detection_times, velocities)
-
+        # self.check_jacobian(sensors_positions, detection_times, velocities, x0, epsilon=1e-8)
         res = least_squares(f, x0, bounds=([t_min, x_min, y_min], [0, x_max, y_max]),
                             jac=jacobian, method="dogbox", ftol=1e-12, xtol=1e-12, gtol=1e-12)
 
         res.x[1:] = self._transform_coordinates_reverse(res.x[1:])
-
+        res.x[0] = (t0 + datetime.timedelta(seconds=res.x[0])).timestamp()
         return res
 
     # get the acoustic celerity between two points
