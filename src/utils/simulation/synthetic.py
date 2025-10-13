@@ -111,7 +111,8 @@ class RealStationDataGenerator:
                  n_noise_detections=100,  # Number of random noise detections
                  detection_probability=1,
                  ridge_data_path=None,  # Path to ridge data directory
-                 ridge_std_km=50,  # Standard deviation for events around ridges
+                 ridge_std_km=50,# Standard deviation for events around ridges
+                 events_bounds = None,
                  perfect_events=False,  # Generate perfect events (no noise)
                  apply_clock_drift=True,  # Apply clock drift errors
                  reference_time_years=1,  # Reference time for clock drift calculation
@@ -124,6 +125,7 @@ class RealStationDataGenerator:
         sound_model: Sound speed in m/s
         ridge_data_path: Path to ridge data directory (if None, events are random)
         ridge_std_km: Standard deviation in km for events around ridges
+        events_bounds: [[lat_min, lat_max], [lon_min, lon_max]]
         perfect_events: If True, no timing noise is added to detections
         apply_clock_drift: If True, applies clock drift errors to stations
         reference_time_years: Reference time in years for clock drift calculation
@@ -141,7 +143,7 @@ class RealStationDataGenerator:
         self.events = None
         self.ground_truth = None
         self.detection_probability = detection_probability
-
+        self.events_bounds = events_bounds
         # Load ridge data if provided
         self.ridge_points = None
         if ridge_data_path and os.path.exists(ridge_data_path):
@@ -157,9 +159,19 @@ class RealStationDataGenerator:
     def _generate_event_location(self):
         """Generate event location either near ridges or randomly"""
         if self.ridge_points is not None:
-            # Generate event near ridges
-            ridge_idx = np.random.randint(0, len(self.ridge_points))
-            base_point = self.ridge_points[ridge_idx]
+            if self.events_bounds is not None:
+                valid_points = [
+                    (i, j)
+                    for i, j in self.ridge_points
+                    if self.events_bounds[0, 0] < i < self.events_bounds[0, 1]
+                       and self.events_bounds[1, 0] < j < self.events_bounds[1, 1]
+                ]
+                ridge_idx = np.random.randint(0, len(valid_points))
+                base_point = valid_points[ridge_idx]
+            else:
+                # Generate event near ridges
+                ridge_idx = np.random.randint(0, len(self.ridge_points))
+                base_point = self.ridge_points[ridge_idx]
 
             # Add normal noise around the point
             std_deg = self.ridge_std_km / 111.0
@@ -188,7 +200,7 @@ class RealStationDataGenerator:
         # Check GPS sync status
         gps_sync = station.other_kwargs.get('gps_sync', True)
 
-        if gps_sync:
+        if gps_sync == "ok":
             # GPS synchronized, no drift correction needed
             return detection_time
         else:
@@ -197,10 +209,13 @@ class RealStationDataGenerator:
 
             # Calculate time elapsed since reference (in seconds)
             reference_time_seconds = self.reference_time_years * 365.25 * 24 * 3600
-
+            print( self.reference_time_years)
             # Get clock error using station method if available
             if hasattr(station, 'get_clock_error'):
-                clock_error_seconds = station.get_clock_error(time_elapsed_seconds=reference_time_seconds)
+                date = station.date_start + timedelta(days=364.25*self.reference_time_years)
+                clock_error_seconds = station.get_clock_error(date=date)
+                print(clock_error_seconds, station.name)
+
             else:
                 # Fallback calculation: ppm * time_elapsed
                 clock_error_seconds = clock_drift_ppm * 1e-6 * reference_time_seconds
@@ -235,7 +250,7 @@ class RealStationDataGenerator:
                 # Calculate distance and travel time
                 travel_time = self.sound_model.get_sound_travel_time(
                     (evt_lat, evt_lon),
-                    (station.get_pos()[0], station.get_pos()[1])
+                    (station.get_pos()[0], station.get_pos()[1]), date=start_time
                 )
 
                 # Detection probability check
@@ -245,7 +260,7 @@ class RealStationDataGenerator:
 
                     # Add timing noise (unless perfect events requested)
                     if not self.perfect_events:
-                        timing_noise = np.random.normal(0, 1.0)  # 1 second std
+                        timing_noise = np.random.normal(0, 3.0)  # 3 second std
                         detection_time = base_detection_time + timedelta(seconds=timing_noise)
                     else:
                         detection_time = base_detection_time

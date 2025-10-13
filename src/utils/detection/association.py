@@ -1,7 +1,7 @@
 import copy
 import pickle
 from pathlib import Path
-
+from joblib import Parallel, delayed
 import numpy as np
 import datetime
 from matplotlib import pyplot as plt
@@ -142,7 +142,9 @@ def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0
                     merge_delta=datetime.timedelta(seconds=5)):
     detections = {}
     for det_file in det_files:
-        station_dataset, station_name = det_file.split("/")[-2],det_file.split("/")[-1].split("_")[-1].split('-')[0]
+        #station_dataset, station_name = det_file.split("/")[-2] , det_file.split("/")[-1].split("_")[-1].split('-')[0]
+        station_dataset, station_name = det_file.split("/")[-1].split('_')[0], \
+        det_file.split("/")[-1].split('_')[1].split(".")[0]
         station = stations.by_dataset(station_dataset).by_name(station_name)
         if len(station) != 1:
             print(
@@ -203,7 +205,7 @@ def compute_grids(lat_bounds, lon_bounds, grid_size, sound_model, stations,
     for s in stations:
         for ilat, lat in enumerate(pts_lat):
             for ilon, lon in enumerate(pts_lon):
-                grid_station_travel_time[s][ilat, ilon] = sound_model.get_sound_travel_time([lat, lon], s.get_pos())
+                grid_station_travel_time[s][ilat, ilon] = sound_model.get_sound_travel_time([lat, lon], s.get_pos(),date=datetime.datetime(year=2020, month=1, day=1))
 
     grid_station_couple_travel_time = {s: {s2: np.zeros((len(pts_lat), len(pts_lon))) for s2 in stations} for s in
                                        stations}
@@ -211,8 +213,58 @@ def compute_grids(lat_bounds, lon_bounds, grid_size, sound_model, stations,
         for s2 in stations:
             grid_station_couple_travel_time[s][s2] = grid_station_travel_time[s2] - grid_station_travel_time[s]
 
-    station_max_travel_time = {s: {s2: sound_model.get_sound_travel_time(s.get_pos(), s2.get_pos()) for s2 in stations}
+    station_max_travel_time = {s: {s2: sound_model.get_sound_travel_time(s.get_pos(), s2.get_pos(), date=datetime.datetime(year=2020, month=1, day=1)) for s2 in stations}
                                for s in stations}
 
     return (pts_lat, pts_lon, station_max_travel_time, grid_station_travel_time,
             grid_station_couple_travel_time, grid_tolerance)
+
+
+def compute_grids_fully_vectorized(lat_bounds, lon_bounds, grid_size, sound_model, stations, pick_uncertainty=5, sound_speed_uncertainty=2):
+    """
+    Calcule les temps de trajet sonores sur toute la grille lat/lon pour plusieurs stations,
+    en vectorisant complètement le calcul sur les latitudes et longitudes.
+    """
+    # Créer la grille 2D
+    pts_lat = np.linspace(lat_bounds[0], lat_bounds[1], grid_size)
+    pts_lon = np.linspace(lon_bounds[0], lon_bounds[1], grid_size)
+    lon2d, lat2d = np.meshgrid(pts_lon, pts_lat)  # forme (grid_size, grid_size)
+
+    # Calcul de la tolérance temporelle
+    grid_max_res_time = (0.5 * np.sqrt(2) * (pts_lat[1] - pts_lat[0]) * 111_000) / (
+                sound_model.constant_velocity - sound_speed_uncertainty)
+    grid_tolerance = grid_max_res_time + pick_uncertainty
+    print(f"Grid tolerance of {grid_tolerance:.2f}s")
+
+    # Initialiser dictionnaire pour stocker les résultats
+    grid_station_travel_time = {}
+
+    # Boucle sur les stations uniquement (pas sur la grille)
+    for s in stations:
+        station_pos = s.get_pos()
+        # Vectorisation complète : aplatisse la grille et calcule tout d'un coup
+        lat_flat = lat2d.ravel()
+        lon_flat = lon2d.ravel()
+        travel_times_flat = np.array([
+            sound_model.get_sound_travel_time([lat_flat[i], lon_flat[i]], station_pos,
+                                              date=datetime.datetime(2020, 1, 1))
+            for i in range(lat_flat.size)
+        ])
+        # Remettre en forme 2D
+        grid_station_travel_time[s] = travel_times_flat.reshape(grid_size, grid_size)
+
+    # Calcul des différences entre toutes les paires de stations
+    grid_station_couple_travel_time = {
+        s: {s2: grid_station_travel_time[s2] - grid_station_travel_time[s] for s2 in stations}
+        for s in stations
+    }
+
+    # Temps de trajet max entre stations
+    station_max_travel_time = {
+        s: {s2: sound_model.get_sound_travel_time(s.get_pos(), s2.get_pos(),
+                                                  date=datetime.datetime(2020, 1, 1))
+            for s2 in stations if s2 != s}
+        for s in stations
+    }
+
+    return pts_lat, pts_lon, station_max_travel_time, grid_station_travel_time, grid_station_couple_travel_time, grid_tolerance
