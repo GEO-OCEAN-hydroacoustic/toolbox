@@ -1,9 +1,12 @@
-cff-version: 1.1.0
+cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: Joe
-  given-names: Johnson
-orcid: https://orcid.org/0000-0000-0000-0000
+- family-names: "Raumer"
+  given-names: "Pierre-Yves"
+- family-names: "Safran"
+  given-names: "Romain"
 title:GEO-OCEAN-hydroacoustic/toolbox: 2025
+doi: 10.5281/zenodo.17531167
 version: 2025
 date-released: 2025-11-05
+url: "https://github.com/GEO-OCEAN-hydroacoustic/toolbox"
