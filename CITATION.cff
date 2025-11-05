@@ -5,8 +5,8 @@ authors:
   given-names: "Pierre-Yves"
 - family-names: "Safran"
   given-names: "Romain"
-title:GEO-OCEAN-hydroacoustic/toolbox: 2025
-doi: 10.5281/zenodo.17531167
-version: 2025
+title: "GEO-OCEAN-hydroacoustic/toolbox: 2025"
+doi: "10.5281/zenodo.17531167"
+version: "2025"
 date-released: 2025-11-05
 url: "https://github.com/GEO-OCEAN-hydroacoustic/toolbox"
