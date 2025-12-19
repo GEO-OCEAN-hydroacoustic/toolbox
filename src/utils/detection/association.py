@@ -161,7 +161,10 @@ def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0
                     break
         d = np.array(d)
         d = d[:, :2]
+        print(min_p_tissnet_secondary)
+        print(len(d))
         d = d[d[:, 1] > min_p_tissnet_secondary]
+        print(len(d))
         d = d[np.argsort(d[:, 0])]
 
         # remove duplicates and regularly spaced signals
