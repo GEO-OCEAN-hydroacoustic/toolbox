@@ -249,10 +249,11 @@ class WFilesManager(SoundFilesManager):
         """ Get the list of the virtual files (nb or records) in the directory.
         :return: None.
         """
-        files = glob.glob(self.path + "/wfdisc/*.wfdisc")
+        files = glob.glob(self.path + "/*.wfdisc")
+        print(files)
         files.sort()  # we assume alphanumerically sorted files are also chronologically sorted
         if len(files) == 0:
-            raise Exception(f"No files found in {self.path}/wfdisc")
+            raise Exception(f"No files found in {self.path}") #/wfdisc
         vfiles = []
         for file in files:
             with open(file, "r") as f:

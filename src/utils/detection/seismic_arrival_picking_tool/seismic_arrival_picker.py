@@ -10,13 +10,14 @@ from scipy import signal
 # This is a placeholder for the DatFilesManager import
 # You'll need to provide the actual path to this module
 try:
-    from src.utils.data_reading.sound_data.sound_file_manager import DatFilesManager
+    from src.utils.data_reading.sound_data.sound_file_manager import WFilesManager as DatFilesManager
 except ImportError:
+
     # Placeholder class for testing without the actual module
     class DatFilesManager:
         def __init__(self, path):
             self.path = path
-            self.sampling_f = 240  # Default sampling frequency
+            self.sampling_f = 250  # Default sampling frequency
 
 class SignalProcessing:
     @staticmethod

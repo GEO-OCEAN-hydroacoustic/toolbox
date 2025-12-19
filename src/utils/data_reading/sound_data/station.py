@@ -72,11 +72,16 @@ class Station:
         return Station(self.path, self.name, self.lat, self.lon, self.depth, self.date_start, self.date_end, self.dataset,
                        other_kwargs=self.other_kwargs)
 
-    def get_clock_error(self, date=None):
+    def get_clock_error(self, date=None, ref_date=None,drift_ppm=None):
         """
         Calculate the accumulated clock error after a given time
         """
-        time_elapsed_seconds = (date -  self.date_start).total_seconds()
+        if ref_date is None:
+            time_elapsed_seconds = (date -  self.date_start).total_seconds()
+        else :
+            time_elapsed_seconds = (date - ref_date).total_seconds()
+        if drift_ppm is not None:
+            return time_elapsed_seconds * drift_ppm * 1e-6
 
         return self.other_kwargs["clock_drift_ppm"] * 1e-6 * time_elapsed_seconds
 

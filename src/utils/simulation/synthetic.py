@@ -192,37 +192,22 @@ class RealStationDataGenerator:
         """Apply clock drift error to detection time if applicable"""
         if not self.apply_clock_drift:
             return detection_time
-
         # Check if station has clock drift information
         if not hasattr(station, 'other_kwargs') or 'clock_drift_ppm' not in station.other_kwargs:
             return detection_time
 
-        # Check GPS sync status
-        gps_sync = station.other_kwargs.get('gps_sync', True)
+        # GPS not synchronized, apply clock drift error
+        clock_drift_ppm = station.other_kwargs['clock_drift_ppm']
+        # Calculate time elapsed since reference (in seconds)
+        # Get clock error using station method if available
+        time_elapsed_seconds = (detection_time - origin_time).total_seconds()
+        clock_error_seconds = clock_drift_ppm * 1e-6 * time_elapsed_seconds
 
-        if gps_sync == "ok":
-            # GPS synchronized, no drift correction needed
-            return detection_time
-        else:
-            # GPS not synchronized, apply clock drift error
-            clock_drift_ppm = station.other_kwargs['clock_drift_ppm']
+        # Apply clock error to detection time
 
-            # Calculate time elapsed since reference (in seconds)
-            reference_time_seconds = self.reference_time_years * 365.25 * 24 * 3600
-            print( self.reference_time_years)
-            # Get clock error using station method if available
-            if hasattr(station, 'get_clock_error'):
-                date = station.date_start + timedelta(days=364.25*self.reference_time_years)
-                clock_error_seconds = station.get_clock_error(date=date)
-                print(clock_error_seconds, station.name)
-
-            else:
-                # Fallback calculation: ppm * time_elapsed
-                clock_error_seconds = clock_drift_ppm * 1e-6 * reference_time_seconds
-
-            # Apply clock error to detection time
-            corrected_time = detection_time + timedelta(seconds=clock_error_seconds)
-            return corrected_time
+        corrected_time = detection_time + timedelta(seconds=clock_error_seconds)
+        # print(corrected_time, station.name)
+        return corrected_time
 
     def generate_events(self, start_time, duration_hours=24):
         """Generate synthetic events with ground truth using real stations"""
@@ -250,7 +235,7 @@ class RealStationDataGenerator:
                 # Calculate distance and travel time
                 travel_time = self.sound_model.get_sound_travel_time(
                     (evt_lat, evt_lon),
-                    (station.get_pos()[0], station.get_pos()[1]), date=start_time
+                    (station.get_pos()[0], station.get_pos()[1]), date=origin_time
                 )
 
                 # Detection probability check
@@ -266,9 +251,7 @@ class RealStationDataGenerator:
                         detection_time = base_detection_time
 
                     # Apply clock drift error
-                    final_detection_time = self._apply_station_clock_error(
-                        station, detection_time, origin_time
-                    )
+                    final_detection_time = self._apply_station_clock_error(station, detection_time, start_time)
 
                     real_events.append({
                         'datetime': final_detection_time,
@@ -286,7 +269,7 @@ class RealStationDataGenerator:
             )
 
             # Apply clock drift to noise events as well
-            final_time = self._apply_station_clock_error(station, base_time, base_time)
+            final_time = self._apply_station_clock_error(station, base_time, start_time)
 
             noise_events.append({
                 'datetime': final_time,
@@ -299,7 +282,7 @@ class RealStationDataGenerator:
         all_events = real_events + noise_events
         # np.random.shuffle(all_events)
 
-        self.events = pd.DataFrame(all_events)
+        self.events = pd.DataFrame.from_dict(all_events)
         self.ground_truth = pd.DataFrame.from_dict(self.ground_truth).set_index("event_id")
         return self.events, self.ground_truth
 

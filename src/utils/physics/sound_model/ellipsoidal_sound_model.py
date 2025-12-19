@@ -22,7 +22,7 @@ class EllipsoidalSoundModel(SoundModel):
         return distance / sound_velocity
 
     def get_sound_travel_time(self, pos1, pos2, date=None):
-        """Public method for calculating sound travel time"""
+        """Public method for calculating sound travel time in seconds"""
         velocity = self.get_sound_speed(pos1, pos2, date)
         return self._get_sound_travel_time(pos1, pos2, date, velocity)
 
@@ -247,7 +247,7 @@ class EllipsoidalSoundModel(SoundModel):
 
         # Calculate true t0 (emission time relative to earliest detection)
         source_position = res.x
-        travel_time_to_ref = self.get_sound_travel_time(source_position, sensors_positions[min_date])
+        travel_time_to_ref = self.get_sound_travel_time(source_position, sensors_positions[min_date],date=t0)
         # ref_velocity = velocities[0]
         # travel_time_to_ref = ref_distance / ref_velocity
         t_origin = (t0 - datetime.timedelta(seconds=travel_time_to_ref)).timestamp()
@@ -292,10 +292,10 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
 
     def localize_common_source(self, sensors_positions, detection_times, x_min=-90, y_min=-180, x_max=90,
                              y_max=180, t_min=-36_000, initial_pos=None, velocities=None):
-        l = self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
-                             y_max, t_min, initial_pos, velocities)
+        # l = self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
+        #                      y_max, t_min, initial_pos, velocities)
         return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
-                             y_max, t_min, l.x, velocities)
+                             y_max, t_min, initial_pos, velocities)
 
     def get_bounds(self):
         lat_mins = [model.lat_bounds[0] for model in self.models]
@@ -547,6 +547,75 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
         res.x = result_x
 
         return res
+
+    def compute_t_origin_uncertainty(self, res,  sensors_positions,detection_times):
+        """
+        Calcule l'incertitude sur t_origin par propagation des erreurs.
+
+        Parameters:
+        -----------
+        res : OptimizeResult
+            Résultat de least_squares contenant la matrice jacobienne
+        sensors_positions : array
+            Positions des capteurs
+        detection_times : array
+            Times des detections
+        Returns:
+        --------
+        float : Incertitude (écart-type) sur t_origin en secondes
+        """
+        min_date = np.argmin(detection_times)
+        t0 = detection_times[min_date]
+
+        # 1. Calculer la matrice de covariance des paramètres [x, y]
+        J = res.jac  # Jacobienne au point optimal
+
+        # Estimation de la variance résiduelle
+        s_sq = (res.fun @ res.fun) / (len(res.fun) - len(res.x))
+
+        # Matrice de covariance de [x, y]
+        try:
+            cov_xy = np.linalg.inv(J.T @ J) * s_sq
+        except np.linalg.LinAlgError:
+            # Si la matrice est singulière, utiliser pseudo-inverse
+            cov_xy = np.linalg.pinv(J.T @ J) * s_sq
+
+        # 2. Calculer le gradient de t_origin par rapport à [x, y]
+        # t_origin = t0 - travel_time(source_position, sensor_ref)
+        # ∂t_origin/∂x_i = -∂travel_time/∂x_i
+        source_position = res.x[1:3]
+
+        epsilon = 1e-6  # Pas pour différences finies
+        grad_t_origin = np.zeros(len(source_position))
+
+        travel_time_ref = self.get_sound_travel_time(
+            source_position,
+            sensors_positions[min_date],
+            date=t0
+        )
+
+        for i in range(len(source_position)):
+            # Perturbation dans la direction i
+            pos_perturbed = source_position.copy()
+            pos_perturbed[i] += epsilon
+
+            travel_time_perturbed = self.get_sound_travel_time(
+                pos_perturbed,
+                sensors_positions[min_date],
+                date=t0
+            )
+
+            # Dérivée partielle : ∂t_origin/∂x_i = -∂travel_time/∂x_i
+            grad_t_origin[i] = -(travel_time_perturbed - travel_time_ref) / epsilon
+
+        # 3. Propagation de l'incertitude : σ²(t_origin) = grad^T · Cov · grad
+        variance_t_origin = grad_t_origin @ cov_xy @ grad_t_origin.T
+
+        # Écart-type (incertitude)
+        uncertainty_t_origin = np.sqrt(
+            max(0, variance_t_origin))  # max pour éviter valeurs négatives dues à erreurs numériques
+
+        return uncertainty_t_origin
 
     def test_chi_square(self, res, n_params=2, alpha=0.05):
         """
