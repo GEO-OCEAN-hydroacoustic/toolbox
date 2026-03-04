@@ -332,6 +332,7 @@ class WFile(SoundFile):
         :param points_to_keep: Number of points to keep. None in case we keep everything after the start.
         :return: The required data.
         """
+        # print(self.path)
         with (open(self.path, 'rb') as file):
             offset_points_start = 0 if offset_points_start is None else offset_points_start
             if offset_points_start > self.header["samples"]:
