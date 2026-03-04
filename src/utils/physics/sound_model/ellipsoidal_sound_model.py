@@ -758,3 +758,4 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
             return uncertainty_ellipse
         else:
             return None
+

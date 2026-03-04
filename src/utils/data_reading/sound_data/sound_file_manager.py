@@ -250,16 +250,17 @@ class WFilesManager(SoundFilesManager):
         :return: None.
         """
         files = glob.glob(self.path + "/*.wfdisc")
-        print(files)
         files.sort()  # we assume alphanumerically sorted files are also chronologically sorted
         if len(files) == 0:
             raise Exception(f"No files found in {self.path}") #/wfdisc
         vfiles = []
         for file in files:
+            # print(files)
             with open(file, "r") as f:
                 lines = f.readlines()
             lines = [line.split() for line in lines]
-            paths = ["/".join(file.split("/")[:-2])+"/"+line[16] for line in lines]
+            # print(file.split("/")[:-1]) ou [:-2]
+            paths = ["/".join(file.split("/")[:-1])+"/"+line[16] for line in lines]
             starts = [datetime.datetime.utcfromtimestamp(float(line[2])) for line in lines]
             ends = [datetime.datetime.utcfromtimestamp(float(line[6])) for line in lines]
             indexes_start = [int(line[17])//4 for line in lines]
