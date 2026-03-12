@@ -208,15 +208,26 @@ class DatFile(SoundFile):
         self._original_samples = int(file_header[7].split()[1])
         duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
         self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
-
+        print(file_header[11])
         if self.raw:
-            #str start date is not correct in raw data since it comes from user computer used to start recording
-            cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
-            try :
-                offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
-            except :
-                # warnings.warn('Data not corrected from offset')
-                offset = int(file_header[11].split()[-1])*200
+            if '200d' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*200
+            elif '005d' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*5 #cylcle reset every 5days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*5
+            else :
+                warnings.warn('CRITICAL UNKNOWN cylcle reset ')
             #forced raw mode header :int(file_header[11].split()[-1])
             gps_zero = ' '.join(file_header[8].split()[-4:])
             locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
