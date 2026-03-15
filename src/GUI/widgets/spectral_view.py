@@ -56,9 +56,39 @@ class SpectralView(QtWidgets.QWidget):
         self.close_button.clicked.connect(self.close_button_click)
         self.control_buttons_layout.addWidget(self.close_button)
         self.unfocus_button = QtWidgets.QPushButton("Unfocus")
-        self.unfocus_button.setStyleSheet("background-color: gray")
+        self.unfocus_button.setCheckable(True)
+        self.unfocus_button.setChecked(False)
+        self.unfocus_button.setStyleSheet("""
+            QPushButton {
+                border: 2px solid #e8a838;
+                padding: 4px 8px;
+                background-color: #e8a838;
+                color: #5c3f0e;
+            }
+            QPushButton:checked {
+                background-color: #fdf3e0;
+                color: #e8a838;
+            }
+        """)
         self.unfocus_button.clicked.connect(self.unfocus_button_click)
         self.control_buttons_layout.addWidget(self.unfocus_button)
+        self.waveform_button = QtWidgets.QPushButton("Waveform")
+        self.waveform_button.setCheckable(True)
+        self.waveform_button.setChecked(False)
+        self.waveform_button.setStyleSheet("""
+            QPushButton {
+                border: 2px solid #3daee9;
+                padding: 4px 8px;
+                background-color: #3daee9;
+                color: #0e3a5c;
+            }
+            QPushButton:checked {
+                background-color: #e0f0fd;
+                color: #3daee9;
+            }
+        """)
+        self.waveform_button.clicked.connect(self.toggle_waveform)
+        self.control_buttons_layout.addWidget(self.waveform_button)
 
         # name of the dataset
         self.label = QLabel(self)
@@ -162,6 +192,15 @@ class SpectralView(QtWidgets.QWidget):
         self.spectralViewer.unfocus_spectral_view(self)
         self.unfocus_button.setText("Unfocus" if self.focused else "Focus")
 
+    def toggle_waveform(self):
+        """ Change the current visualization to waveform
+        :return: None
+        """
+        self.waveform = self.waveform_button.isChecked()
+        self.waveform_button.setText("Spectrogram" if self.waveform else "Waveform")
+        self.start = None
+        self.update_plot()
+
     def update_segment_length_editor(self):
         """ Update the segment length spin box after the slider is changed.
         :return: None.
@@ -206,6 +245,8 @@ class SpectralView(QtWidgets.QWidget):
 
         self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_segment_date_slider)
         self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
+
+        self.update_plot()
 
     def update_date_bounds(self):
         """ Update the current min and max allowed segment date given current segment length (to avoid getting out of
@@ -324,10 +365,6 @@ class SpectralView(QtWidgets.QWidget):
                                                self.segment_date_dateTimeEdit.time())
         delta = datetime.timedelta(seconds=self.segment_length_doubleSpinBox.value() / 2)
 
-
-        if key.key == 'shift':
-            # switch from spectro to waveform and vice-versa
-            self.waveform = not self.waveform
         if key.key == 'right':
             # go to right
             segment_center += delta
@@ -439,11 +476,13 @@ def Qdatetime_to_datetime(qdate, qtime):
                              qtime.hour(), qtime.minute(), qtime.second())
 
 
-def datetime_to_Qdatetime(datetime, day_offset=0):
+def datetime_to_Qdatetime(dt, day_offset=0):
     """ Utility function to convert Python datetimes to PySide datetimes.
-    :param datetime: A Python datetime.
+    :param dt: A Python datetime.
+    :param day_offset: Optional offset in days.
     :return: A PySide datetime.
     """
+    dt = dt + datetime.timedelta(days=day_offset)
     return QDateTime(
-        QDate(datetime.year, datetime.month, datetime.day + day_offset),
-        QTime(datetime.hour, datetime.minute, datetime.second))
+        QDate(dt.year, dt.month, dt.day),
+        QTime(dt.hour, dt.minute, dt.second))
