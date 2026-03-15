@@ -61,9 +61,10 @@ class SpectralViewerWindow(QMainWindow):
                 if len(line) == 0:
                     continue
                 for sname, date in [line[i:i+2] for i in range(6, len(line)-1, 2)]:
-                    date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
-                    s = self.stations.by_name(sname).by_date(date)[0]
-                    self.loc_res.setdefault(s, []).append(date)
+                    if sname != "" and date != "":
+                        date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
+                        s = self.stations.by_name(sname).by_date(date)[0]
+                        self.loc_res.setdefault(s, []).append(date)
             for s in self.loc_res.keys():
                 self.loc_res[s] = sorted(self.loc_res[s])
         single_path = self.loc_res_path[:-4] + "_Pn.csv"
@@ -203,22 +204,22 @@ class SpectralViewerWindow(QMainWindow):
         """
         # in case the broadcast checkbox is checked, we broadcast if possible the shortcut to all spectral view
         if self.broadcast_checkbox.isChecked() and 'enter' not in key.key:
-            for spectral_view in self.SpectralViews:
-                spectral_view.on_key_local(key)
+            for sv in self.SpectralViews:
+                sv.on_key_local(key)
         else:
             spectral_view.on_key_local(key)
 
     def notify_delta(self, delta, spectral_view):
-        if self.broadcast_checkbox.isChecked():
-            for spectral_view_ in self.SpectralViews:
-                if spectral_view_ != spectral_view:
-                    segment_center = Qdatetime_to_datetime(spectral_view_.segment_date_dateTimeEdit.date(),
-                                                           spectral_view_.segment_date_dateTimeEdit.time())
-                    segment_center += delta
-                    # we temporarily disable the broadcast checkbox to avoid recursive calls
-                    self.broadcast_checkbox.setChecked(False)
-                    spectral_view_.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
-                    self.broadcast_checkbox.setChecked(True)
+        if not self.broadcast_checkbox.isChecked() or getattr(self, '_broadcasting', False):
+            return
+        self._broadcasting = True
+        for sv in self.SpectralViews:
+            if sv != spectral_view:
+                segment_center = Qdatetime_to_datetime(sv.segment_date_dateTimeEdit.date(),
+                                                       sv.segment_date_dateTimeEdit.time())
+                segment_center += delta
+                sv.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
+        self._broadcasting = False
 
     def clear_spectral_views(self):
         """ Clears the current window by removing all SpectralView widgets. Also clears top bar labels.
@@ -267,6 +268,9 @@ class SpectralViewerWindow(QMainWindow):
         """
         spectral_view.setParent(None)
         self.SpectralViews.remove(spectral_view)
+        spectral_view.deleteLater()
+        for view in self.SpectralViews:  # resize other spectral views if needed
+            view.setFixedHeight(max(self.height() * 0.9 // len(self.SpectralViews), MIN_SPECTRAL_VIEW_HEIGHT))
 
     def unfocus_spectral_view(self, spectral_view):
         """ Remove a particular spectral_view from the focus, s.t. it is not used for computations like source location.
