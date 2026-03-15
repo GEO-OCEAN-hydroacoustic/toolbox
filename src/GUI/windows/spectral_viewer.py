@@ -20,26 +20,29 @@ from utils.data_reading.sound_data.station import StationsCatalog, Station
 from utils.detection.TiSSNet import TiSSNet
 
 
-MIN_SPECTRAL_VIEW_HEIGHT = 200
+MIN_SPECTRAL_VIEW_HEIGHT = 300
 DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
+    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None, vmin_spectro=60, vmax_spectro=120):
         """ Constructor initializing the window and setting its visual appearance.
         :param datasets_csv: csv file containing information about the available stations.
         :param sound_model: Sound model used to predict travel time and to locate events.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         :param events_path: Path of a yaml file describing some events.
         :param loc_res_path: Path of file where the localization results will be written.
+        :param vmin_spectro: Minimum colorbar bound used for spectrogram visualization.
+        :param vmax_spectro: Maximum colorbar bound used for spectrogram visualization.
         """
         # TiSSNet
         self.detection_model = None
         if tissnet_checkpoint:
-            self.detection_model = TiSSNet()
-            self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
+            self.detection_model = TiSSNet().to("cpu")
+            self.detection_model.load_state_dict(torch.load(tissnet_checkpoint, map_location="cpu"))
 
         self.sound_model = sound_model
+        self.vmin_spectro, self.vmax_spectro = vmin_spectro, vmax_spectro
 
         self.events_path = events_path
         self.loc_res = {}  # contains the pick dates of the events located with the tool
@@ -61,9 +64,10 @@ class SpectralViewerWindow(QMainWindow):
                 if len(line) == 0:
                     continue
                 for sname, date in [line[i:i+2] for i in range(6, len(line)-1, 2)]:
-                    date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
-                    s = self.stations.by_name(sname).by_date(date)[0]
-                    self.loc_res.setdefault(s, []).append(date)
+                    if sname != "" and date != "":
+                        date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
+                        s = self.stations.by_name(sname).by_date(date)[0]
+                        self.loc_res.setdefault(s, []).append(date)
             for s in self.loc_res.keys():
                 self.loc_res[s] = sorted(self.loc_res[s])
         single_path = self.loc_res_path[:-4] + "_Pn.csv"
@@ -159,7 +163,7 @@ class SpectralViewerWindow(QMainWindow):
         :return: None.
         """
         sv = SpectralView if self.detection_model is None else SpectralViewTissnet
-        new_SpectralView = sv(self, station, date=date, delta_view_s=DELTA_VIEW_S)
+        new_SpectralView = sv(self, station, date=date, delta_view_s=DELTA_VIEW_S, vmin_spectro=self.vmin_spectro, vmax_spectro=self.vmax_spectro)
         self.verticalLayout.addWidget(new_SpectralView)
         self.SpectralViews.append(new_SpectralView)
         for view in self.SpectralViews:  # resize other spectral views if needed
@@ -203,22 +207,22 @@ class SpectralViewerWindow(QMainWindow):
         """
         # in case the broadcast checkbox is checked, we broadcast if possible the shortcut to all spectral view
         if self.broadcast_checkbox.isChecked() and 'enter' not in key.key:
-            for spectral_view in self.SpectralViews:
-                spectral_view.on_key_local(key)
+            for sv in self.SpectralViews:
+                sv.on_key_local(key)
         else:
             spectral_view.on_key_local(key)
 
     def notify_delta(self, delta, spectral_view):
-        if self.broadcast_checkbox.isChecked():
-            for spectral_view_ in self.SpectralViews:
-                if spectral_view_ != spectral_view:
-                    segment_center = Qdatetime_to_datetime(spectral_view_.segment_date_dateTimeEdit.date(),
-                                                           spectral_view_.segment_date_dateTimeEdit.time())
-                    segment_center += delta
-                    # we temporarily disable the broadcast checkbox to avoid recursive calls
-                    self.broadcast_checkbox.setChecked(False)
-                    spectral_view_.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
-                    self.broadcast_checkbox.setChecked(True)
+        if not self.broadcast_checkbox.isChecked() or getattr(self, '_broadcasting', False):
+            return
+        self._broadcasting = True
+        for sv in self.SpectralViews:
+            if sv != spectral_view:
+                segment_center = Qdatetime_to_datetime(sv.segment_date_dateTimeEdit.date(),
+                                                       sv.segment_date_dateTimeEdit.time())
+                segment_center += delta
+                sv.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
+        self._broadcasting = False
 
     def clear_spectral_views(self):
         """ Clears the current window by removing all SpectralView widgets. Also clears top bar labels.
@@ -267,6 +271,9 @@ class SpectralViewerWindow(QMainWindow):
         """
         spectral_view.setParent(None)
         self.SpectralViews.remove(spectral_view)
+        spectral_view.deleteLater()
+        for view in self.SpectralViews:  # resize other spectral views if needed
+            view.setFixedHeight(max(self.height() * 0.9 // len(self.SpectralViews), MIN_SPECTRAL_VIEW_HEIGHT))
 
     def unfocus_spectral_view(self, spectral_view):
         """ Remove a particular spectral_view from the focus, s.t. it is not used for computations like source location.

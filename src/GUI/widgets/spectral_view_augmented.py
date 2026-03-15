@@ -10,20 +10,15 @@ from utils.physics.signal.make_spectrogram import make_spectrogram
 
 
 class SpectralViewTissnet(SpectralView):
-    """ Spectral view enabling, with shift+enter, to apply TiSSNet on the current spectrogram.
+    """ Spectral view enabling, with shift+enter, to apply TiSSNet on the current spectrogram (visualization purpose).
     """
-    def __init__(self, SpectralViewer, station, date=None, delta_view_s=MIN_SEGMENT_DURATION_S, *args, **kwargs):
-        """ Initialize the SpectralView.
-        :param SpectralViewer: The parent SpectralViews window.
-        :param station: A Station instance.
-        :param date: Initial datetime on which to focus the widget. If None, the start of the data will be chosen.
-        :param delta_view_s: Initial half duration of the shown spectrogram, in s.
-        :param args: Supplementary arguments for the widget as a PySide widget.
-        :param kwargs: Supplementary key arguments for the widget as a PySide widget.
+    def __init__(self, SpectralViewer, station, date=None, delta_view_s=MIN_SEGMENT_DURATION_S, vmin_spectro=60, vmax_spectro=120, *args, **kwargs):
+        """ Initialize the SpectralView. See SpectralView documentation.
         """
-        super().__init__(SpectralViewer, station, date, delta_view_s, *args, **kwargs)
+        super().__init__(SpectralViewer, station, date, delta_view_s, vmin_spectro, vmax_spectro, *args, **kwargs)
         self.init_mpl()
         self.mpl_layout.addWidget(self.mpl_models)
+        self.last_date_processed = None  # enable to know if the user moved since the last results visualization
 
     def on_key(self, key):
         """ Checks if the TiSSNet shortcut has been pressed.
@@ -54,6 +49,13 @@ class SpectralViewTissnet(SpectralView):
             return
 
         start, end = self.get_time_bounds()
+        if self.last_date_processed == (start, end):
+            # the user did not move and likely wants to remove the result visualization
+            self.mpl_layout.removeWidget(self.mpl_models)
+            self.mpl_models.setVisible(False)
+            return
+
+        self.last_date_processed = (start, end)
         data = self.manager.get_segment(start, end)
         spectrogram = make_spectrogram(data, self.manager.sampling_f, t_res=0.5342, f_res=0.9375, return_bins=False,
                                        normalize=True, vmin=-35, vmax=140).astype(np.float32)
