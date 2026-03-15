@@ -20,26 +20,29 @@ from utils.data_reading.sound_data.station import StationsCatalog, Station
 from utils.detection.TiSSNet import TiSSNet
 
 
-MIN_SPECTRAL_VIEW_HEIGHT = 200
+MIN_SPECTRAL_VIEW_HEIGHT = 300
 DELTA_VIEW_S = 200
 class SpectralViewerWindow(QMainWindow):
     """ Window containing several SpectralView widgets and enabling to import them one by one or in group.
     """
-    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None):
+    def __init__(self, datasets_csv=None, sound_model=None, tissnet_checkpoint=None, events_path=None, loc_res_path=None, vmin_spectro=60, vmax_spectro=120):
         """ Constructor initializing the window and setting its visual appearance.
         :param datasets_csv: csv file containing information about the available stations.
         :param sound_model: Sound model used to predict travel time and to locate events.
         :param tissnet_checkpoint: Checkpoint of TiSSNet model in case we want to try detection.
         :param events_path: Path of a yaml file describing some events.
         :param loc_res_path: Path of file where the localization results will be written.
+        :param vmin_spectro: Minimum colorbar bound used for spectrogram visualization.
+        :param vmax_spectro: Maximum colorbar bound used for spectrogram visualization.
         """
         # TiSSNet
         self.detection_model = None
         if tissnet_checkpoint:
-            self.detection_model = TiSSNet()
-            self.detection_model.load_state_dict(torch.load(tissnet_checkpoint))
+            self.detection_model = TiSSNet().to("cpu")
+            self.detection_model.load_state_dict(torch.load(tissnet_checkpoint, map_location="cpu"))
 
         self.sound_model = sound_model
+        self.vmin_spectro, self.vmax_spectro = vmin_spectro, vmax_spectro
 
         self.events_path = events_path
         self.loc_res = {}  # contains the pick dates of the events located with the tool
@@ -160,7 +163,7 @@ class SpectralViewerWindow(QMainWindow):
         :return: None.
         """
         sv = SpectralView if self.detection_model is None else SpectralViewTissnet
-        new_SpectralView = sv(self, station, date=date, delta_view_s=DELTA_VIEW_S)
+        new_SpectralView = sv(self, station, date=date, delta_view_s=DELTA_VIEW_S, vmin_spectro=self.vmin_spectro, vmax_spectro=self.vmax_spectro)
         self.verticalLayout.addWidget(new_SpectralView)
         self.SpectralViews.append(new_SpectralView)
         for view in self.SpectralViews:  # resize other spectral views if needed

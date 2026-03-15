@@ -5,7 +5,7 @@ import numpy as np
 import scipy
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtWidgets import QLabel, QSlider, \
-    QDateTimeEdit, QDoubleSpinBox, QHBoxLayout
+    QDateTimeEdit, QDoubleSpinBox, QHBoxLayout, QWidget
 from PySide6.QtCore import (QDate, QDateTime, QTime, Qt, QTimer)
 from scipy import signal
 
@@ -20,12 +20,14 @@ class SpectralView(QtWidgets.QWidget):
     """ Widget to explore a .wav folder by viewing spectrograms
     """
 
-    def __init__(self, SpectralViewer, station, date=None, delta_view_s=MIN_SEGMENT_DURATION_S*8, *args, **kwargs):
+    def __init__(self, SpectralViewer, station, date=None, delta_view_s=MIN_SEGMENT_DURATION_S*8, vmin_spectro=60, vmax_spectro=120, *args, **kwargs):
         """ Constructor initializing various parameters and setting up the interface.
         :param SpectralViewer: The parent SpectralViews window.
         :param station: A Station instance.
         :param date: Initial datetime on which to focus the widget. If None, the start of the data will be chosen.
         :param delta_view_s: Initial half duration of the shown spectrogram, in s.
+        :param vmin_spectro: Minimum colorbar bound used for spectrogram visualization.
+        :param vmax_spectro: Maximum colorbar bound used for spectrogram visualization.
         :param args: Supplementary arguments for the widget as a PySide widget.
         :param kwargs: Supplementary key arguments for the widget as a PySide widget.
         """
@@ -36,6 +38,7 @@ class SpectralView(QtWidgets.QWidget):
         self.manager = station.manager
         self.waveform = False  # if true, displays the waveform instead of the spectrogram
         self.focused = True  # if true, this spectral_view is used for computations such as source location
+        self.vmin_spectro, self.vmax_spectro = vmin_spectro, vmax_spectro
 
         # min and max shown frequencies
         self.freq_range = [0, int(self.manager.sampling_f / 2)]
@@ -45,8 +48,11 @@ class SpectralView(QtWidgets.QWidget):
         # main layout that will contain the spectro, dataset name and options
         self.layout = QtWidgets.QHBoxLayout(self)
         # secondary layout (at left) that will contain dataset name and options
-        self.control_layout = QtWidgets.QVBoxLayout()
-        self.layout.addLayout(self.control_layout)
+        self.control_widget = QWidget(self)
+        self.control_widget.setFixedWidth(250)
+        self.control_layout = QtWidgets.QVBoxLayout(self.control_widget)
+        self.control_layout.setContentsMargins(4, 4, 4, 4)
+        self.layout.addWidget(self.control_widget)
 
         # control buttons
         self.control_buttons_layout = QHBoxLayout()
@@ -92,7 +98,7 @@ class SpectralView(QtWidgets.QWidget):
 
         # name of the dataset
         self.label = QLabel(self)
-        self.label.setFixedWidth(300)
+        self.label.setFixedWidth(240)
         dataset = self.station.dataset or self.manager.path.split("/")[-2]
         label_text = f'{dataset} - {self.station.name}'
         if self.station.lat:
@@ -104,66 +110,93 @@ class SpectralView(QtWidgets.QWidget):
         self.control_layout.addWidget(self.label)
 
         # controller of the segment length, made of a spin box (text editor) and a slider, both interconnected
-        # segment length layout
-        self.segment_length_layout = QtWidgets.QGridLayout()
+        # segment length: label + spin box on same line, slider below
+        self.segment_length_layout = QtWidgets.QVBoxLayout()
         self.segment_length_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
         self.control_layout.addLayout(self.segment_length_layout)
 
-        # segment length label
-        self.segment_length_label = QLabel(self)
-        self.segment_length_label.setText("Segment duration (s)")
-        self.segment_length_layout.addWidget(self.segment_length_label, 0, 0, 1, 1)
-
-        # segment length spin box
+        self.segment_length_row = QHBoxLayout()
+        self.segment_length_label = QLabel("Segment duration (s)", self)
+        self.segment_length_row.addWidget(self.segment_length_label)
         self.segment_length_doubleSpinBox = QDoubleSpinBox(self)
         self.segment_length_doubleSpinBox.setMinimum(MIN_SEGMENT_DURATION_S)
         self.segment_length_doubleSpinBox.setMaximum(MAX_SEGMENT_DURATION_S)
         self.segment_length_doubleSpinBox.setValue(2 * delta_view_s)
-        self.segment_length_layout.addWidget(self.segment_length_doubleSpinBox, 1, 0, 1, 1)
-        # spin box triggers to update the allowed segment date range, the slider and the plot when changed
+        self.segment_length_row.addWidget(self.segment_length_doubleSpinBox)
+        self.segment_length_layout.addLayout(self.segment_length_row)
+
+        self.segment_length_slider = QSlider(Qt.Horizontal, self)
+        self.segment_length_slider.setMinimum(MIN_SEGMENT_DURATION_S)
+        self.segment_length_slider.setMaximum(MAX_SEGMENT_DURATION_S)
+        self.segment_length_layout.addWidget(self.segment_length_slider)
+        # slider trigger to update the spin box when released (and recursively the plot)
+        self.segment_length_slider.sliderReleased.connect(self.update_segment_length_editor)
         self.segment_length_doubleSpinBox.valueChanged.connect(self.update_date_bounds)
         self.segment_length_doubleSpinBox.valueChanged.connect(self.update_segment_length_slider)
         self.segment_length_doubleSpinBox.valueChanged.connect(self.update_plot)
 
-        # segment length slider
-        self.segment_length_slider = QSlider(self)
-        self.segment_length_slider.setMinimum(MIN_SEGMENT_DURATION_S)
-        self.segment_length_slider.setMaximum(MAX_SEGMENT_DURATION_S)
-        self.segment_length_slider.setOrientation(Qt.Horizontal)
-        self.segment_length_layout.addWidget(self.segment_length_slider, 2, 0, 1, 3)
-        # slider trigger to update the spin box when released (and recursively the plot)
-        self.segment_length_slider.sliderReleased.connect(self.update_segment_length_editor)
+        # controller of the spectrogram color bounds (vmin / vmax)
+        self.spectro_bounds_layout = QtWidgets.QGridLayout()
+        self.spectro_bounds_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
+        self.control_layout.addLayout(self.spectro_bounds_layout)
+
+        self.spectro_bounds_label = QLabel(self)
+        self.spectro_bounds_label.setText("Spectrogram bounds (dB)")
+        self.spectro_bounds_layout.addWidget(self.spectro_bounds_label, 0, 0, 1, 2)
+
+        # vmin
+        self.vmin_label = QLabel("min", self)
+        self.spectro_bounds_layout.addWidget(self.vmin_label, 1, 0)
+        self.vmin_slider = QSlider(Qt.Horizontal, self)
+        self.vmin_slider.setMinimum(0)
+        self.vmin_slider.setMaximum(200)
+        self.vmin_slider.setValue(self.vmin_spectro)
+        self.spectro_bounds_layout.addWidget(self.vmin_slider, 1, 1)
+
+        # vmax
+        self.vmax_label = QLabel("max", self)
+        self.spectro_bounds_layout.addWidget(self.vmax_label, 2, 0)
+        self.vmax_slider = QSlider(Qt.Horizontal, self)
+        self.vmax_slider.setMinimum(0)
+        self.vmax_slider.setMaximum(200)
+        self.vmax_slider.setValue(self.vmax_spectro)
+        self.spectro_bounds_layout.addWidget(self.vmax_slider, 2, 1)
+
+        # connect sliders
+        self.vmin_slider.valueChanged.connect(self._update_vmin_tooltip)
+        self.vmax_slider.valueChanged.connect(self._update_vmax_tooltip)
+        self.vmin_slider.sliderReleased.connect(self.update_spectro_bounds)
+        self.vmax_slider.sliderReleased.connect(self.update_spectro_bounds)
+
+        # initialize tooltips
+        self._update_vmin_tooltip()
+        self._update_vmax_tooltip()
 
         # controller of the segment date, made of a date time editor and a slider, both interconnected
-        # segment date layout
-        self.segment_date_layout = QtWidgets.QGridLayout()
+        # segment date: label + datetime edit on same line, slider below
+        self.segment_date_layout = QtWidgets.QVBoxLayout()
         self.segment_date_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
         self.control_layout.addLayout(self.segment_date_layout)
 
-        # segment date label
-        self.segment_date_label = QLabel(self)
-        self.segment_date_label.setText("Segment date")
-        self.segment_date_layout.addWidget(self.segment_date_label, 0, 0, 1, 1)
-
-        # segment date time edit
+        self.segment_date_row = QHBoxLayout()
+        self.segment_date_label = QLabel("Segment date", self)
+        self.segment_date_row.addWidget(self.segment_date_label)
         self.segment_date_dateTimeEdit = QDateTimeEdit(self)
         self.segment_date_dateTimeEdit.setInputMethodHints(Qt.ImhPreferNumbers)
         self.segment_date_dateTimeEdit.setDisplayFormat("yyyy/MM/dd hh:mm:ss")
         self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(self.manager.dataset_start))
-        self.segment_date_layout.addWidget(self.segment_date_dateTimeEdit, 1, 0, 1, 1)
-        # set the initital date
+        self.segment_date_row.addWidget(self.segment_date_dateTimeEdit)
+        self.segment_date_layout.addLayout(self.segment_date_row)
+
+        self.segment_date_slider = QSlider(Qt.Horizontal, self)
+        self.segment_date_layout.addWidget(self.segment_date_slider)
+        # slider trigger to update the date time edit when released (and recursively the plot)
+        self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
         if date is not None:
             self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(date))
         # date time edit triggers to update the slider and the plot when changed
         self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_segment_date_slider)
         self.segment_date_dateTimeEdit.dateTimeChanged.connect(self.update_plot)
-
-        # segment date slider
-        self.segment_date_slider = QSlider(self)
-        self.segment_date_slider.setOrientation(Qt.Horizontal)
-        self.segment_date_layout.addWidget(self.segment_date_slider, 2, 0, 1, 3)
-        # slider trigger to update the date time edit when released (and recursively the plot)
-        self.segment_date_slider.sliderReleased.connect(self.update_segment_date_editor)
 
         # mpl canvas containing the spectrogram
         self.mpl_layout = QtWidgets.QVBoxLayout()
@@ -191,6 +224,29 @@ class SpectralView(QtWidgets.QWidget):
         """
         self.spectralViewer.unfocus_spectral_view(self)
         self.unfocus_button.setText("Unfocus" if self.focused else "Focus")
+
+    def update_spectro_bounds(self):
+        """Update vmin/vmax from sliders, ensuring vmin < vmax, then refresh the plot."""
+        vmin = self.vmin_slider.value()
+        vmax = self.vmax_slider.value()
+        if vmin >= vmax:
+            # impossible case, the vmax or vmin are modified accordingly
+            if self.sender() == self.vmin_slider:
+                vmax = vmin + 1
+                self.vmax_slider.setValue(vmax)
+            else:
+                vmin = vmax - 1
+                self.vmin_slider.setValue(vmin)
+        self.vmin_spectro = vmin
+        self.vmax_spectro = vmax
+        self.start = None
+        self.update_plot()
+
+    def _update_vmin_tooltip(self):
+        self.vmin_slider.setToolTip(f"{self.vmin_slider.value()} dB")
+
+    def _update_vmax_tooltip(self):
+        self.vmax_slider.setToolTip(f"{self.vmax_slider.value()} dB")
 
     def toggle_waveform(self):
         """ Change the current visualization to waveform
@@ -279,9 +335,12 @@ class SpectralView(QtWidgets.QWidget):
                 self.mpl.axes.set_xlim(extent[0], extent[1])
                 self.mpl.axes.set_ylim(-np.max(np.abs(self.data)), np.max(np.abs(self.data)))
             else:
-                (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375, return_bins=True, normalize=True, vmin=60, vmax=120)
-                # label the time axis from -delta to +delta
+                (f, t, spectro) = make_spectrogram(self.data, self.manager.sampling_f, t_res=0.25, f_res=0.9375,
+                                                   return_bins=True, normalize=True, vmin=self.vmin_spectro,
+                                                   vmax=self.vmax_spectro)
+                extent = [-delta.total_seconds(), delta.total_seconds(), 0, self.manager.sampling_f / 2]
                 self.mpl.axes.imshow(spectro, aspect="auto", extent=extent, vmin=0, vmax=1, cmap="inferno")
+                self.mpl.axes.set_ylim(self.freq_range[0], self.freq_range[1])
                 self.mpl.axes.set_ylabel('f (Hz)')
 
             self.mpl.axes.axvline(0, color="w", alpha=0.25, linestyle="--")
@@ -332,7 +391,7 @@ class SpectralView(QtWidgets.QWidget):
                 segment_center += datetime.timedelta(seconds=click.xdata)  # move to the click location
                 self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
             elif click.button.name == "RIGHT":  # Pn / T annotation
-                path = self.spectralViewer.loc_res_path[:-4] + "_Pn.csv"
+                path = self.spectralViewer.loc_res_path[:-4] + "_single.csv"
                 if path is not None:
                     with open(path, "a+") as f:
                         name = self.station.name
@@ -432,6 +491,7 @@ class SpectralView(QtWidgets.QWidget):
             return
 
         # update widgets
+        self.start = None
         self.segment_date_dateTimeEdit.setDateTime(datetime_to_Qdatetime(segment_center))
         self.segment_length_doubleSpinBox.setValue(delta.total_seconds() * 2)
         self.update_plot()
