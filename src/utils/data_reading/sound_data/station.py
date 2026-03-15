@@ -28,9 +28,10 @@ class Station:
         self.lon = lon
         self.dataset = dataset
         self.other_kwargs = {}
-        for k, v in other_kwargs.items():
-            if v != "" and not (isinstance(v, np.float64) and np.isnan(v)):
-                self.other_kwargs[k] = v
+        if other_kwargs:
+            for k, v in other_kwargs.items():
+                if v != "" and not (isinstance(v, np.float64) and np.isnan(v)):
+                    self.other_kwargs[k] = v
         if initialize_metadata:
             self.get_manager()
             self.name = name or self.manager.name

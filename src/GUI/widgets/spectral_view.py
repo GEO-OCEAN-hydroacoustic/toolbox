@@ -1,18 +1,16 @@
 import datetime
 import os
-
+import sounddevice
 import numpy as np
 import scipy
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtWidgets import QLabel, QSlider, \
     QDateTimeEdit, QDoubleSpinBox, QHBoxLayout
 from PySide6.QtCore import (QDate, QDateTime, QTime, Qt, QTimer)
-from playsound import playsound
 from scipy import signal
 
 from GUI.widgets.mpl_canvas import MplCanvas
 from utils.physics.signal.make_spectrogram import make_spectrogram
-
 # minimal duration of the spectrograms shown, in s
 MIN_SEGMENT_DURATION_S = 30
 # maximal duration of the spectrograms shown, in s
@@ -347,10 +345,14 @@ class SpectralView(QtWidgets.QWidget):
             data = self.manager.get_segment(segment_center - delta, segment_center + delta)
             data = data / np.max(np.abs(data))
 
-            # write a temporary file
+            # write a file
             to_write = np.int16(32767 * data / np.max(np.abs(data)))
-            scipy.io.wavfile.write("../../data/GUI/temp_audio.wav", int(self.manager.sampling_f * 20), to_write)
-            playsound("../../data/GUI/temp_audio.wav")
+            # name : station_YYYYMMDD_hhmmss_durations
+            station_str = f"{self.station.dataset}_{self.station.name}" if self.station.dataset else self.station.name
+            name = f'{station_str}_{(segment_center-delta).strftime("%Y%m%d_%H%M%S")}_{int((delta*2).total_seconds())}s.wav'
+            scipy.io.wavfile.write(f"../../data/GUI/{name}", int(self.manager.sampling_f), to_write)
+            # play the sound 20x faster
+            sounddevice.play(to_write, int(self.manager.sampling_f * 20))
 
         elif key.key == "up":
             # increase min and max allowed frequency, respecting the limit of the Nyquist-Shannon frequency
