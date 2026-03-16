@@ -10,6 +10,7 @@ def make_spectrogram(data, fs, t_res=0.5, f_res=0.5, log=True, return_bins=False
     spectro = spectro[::-1]
 
     if log:
+        spectro = np.maximum(spectro, np.finfo(float).tiny)  # avoid having 0s in the spectro
         spectro = 10*np.log10(spectro)
     vmin = vmin or np.min(spectro)
     vmax = vmax or np.max(spectro)
