@@ -338,7 +338,7 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
             var_pick = pick_uncertainties[ref_idx] ** 2 + pick_uncertainties[sensor_idx] ** 2
 
             # 2. Vitesse (seulement si velocity_uncertainties est spécifié)
-            if velocity_uncertainties is not None and np.any(velocity_uncertainties > 0):
+            if velocity_uncertainties is not None :#and np.any(velocity_uncertainties > 0):
                 var_velocity_ref = (distances[ref_idx] / velocities[ref_idx] ** 2) ** 2 * velocity_uncertainties[
                     ref_idx] ** 2
                 var_velocity_sensor = (distances[sensor_idx] / velocities[sensor_idx] ** 2) ** 2 * \
@@ -512,6 +512,9 @@ class GridEllipsoidalSoundModel(EllipsoidalSoundModel):
         if velocities is None:
             velocities = [self.get_sound_speed(initial_pos, p, t0)
                           for p in sensors_positions]
+
+        # velocity_uncertainties = [self.get_sound_speed_with_uncertainty(initial_pos, p, t0)[1]
+        #                   for p in sensors_positions]
 
         weights = self._compute_observation_weights(
             sensors_positions, detection_times_rel, velocities,
