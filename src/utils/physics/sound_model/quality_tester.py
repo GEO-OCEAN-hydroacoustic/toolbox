@@ -248,7 +248,7 @@ class LocalizationQualityTester:
             'p_value': 0.863,
             'max_zscore': 0.697,
             'azimuthal_gap': 0.669,
-            'n_obs': 0.5  # Poids arbitraire pour robustesse
+            'n_obs': 0.7  # Poids arbitraire pour robustesse
         }
         total_weight = sum(weights.values())
 

@@ -228,7 +228,7 @@ class StationsCatalog():
     def by_dataset(self, dataset):
         res = StationsCatalog()
         for st in self.stations:
-            if st.dataset == dataset:
+            if st.dataset in dataset:
                 res.add_station(st)
         return res
 

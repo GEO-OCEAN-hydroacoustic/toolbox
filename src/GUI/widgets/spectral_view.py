@@ -1,6 +1,6 @@
 import datetime
 import os
-import sounddevice
+# import sounddevice
 import numpy as np
 import scipy
 from PySide6 import QtWidgets, QtGui
