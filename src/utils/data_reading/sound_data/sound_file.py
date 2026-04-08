@@ -1,5 +1,6 @@
 import datetime
 import os
+import warnings
 import wave
 
 import numpy as np
@@ -7,9 +8,9 @@ import math
 import re
 import locale
 import soundfile as sf
-import warnings
-from src.utils.time.GPS import get_leap_second
-from src.utils.transformation.signal import butter_bandpass_filter
+
+from utils.time.GPS import get_leap_second
+from utils.transformation.signal import butter_bandpass_filter
 
 
 class SoundFile:
@@ -99,11 +100,10 @@ class SoundFile:
             # select the data ending before end
             keep = end - (max(start, self.header["start_date"]) if start else self.header["start_date"])
             points_to_keep = int(keep.total_seconds() * self.header["sampling_frequency"])
-            max_possible_length = self.header["samples"] - offset_points_start if offset_points_start else self.header[
-                "samples"]
+            max_possible_length = self.header["samples"] - offset_points_start if offset_points_start else self.header["samples"]
             points_to_keep = None if points_to_keep > max_possible_length else points_to_keep
 
-        if points_to_keep is not None and points_to_keep < 0:
+        if points_to_keep is not None and points_to_keep<0:
             return []
 
         data = self.read_data_subpart(offset_points_start, points_to_keep)
@@ -178,7 +178,7 @@ class DatFile(SoundFile):
     EXTENSION = "DAT"
     TO_VOLT = 5.0 / 2 ** 24  # we consider a fixed dynamic range of 5V (+/- 2.5V) on 24 bits
 
-    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw=False):
+    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw=True):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
         :param sensitivity: Sensitivity of the sensor.
@@ -188,8 +188,6 @@ class DatFile(SoundFile):
         """
         self.sensitivity = sensitivity
         self.raw = raw
-        # if "raw" in path:
-        #     self.raw = True
         super().__init__(path, skip_data, identifier)
 
     def _read_header(self):
@@ -201,19 +199,30 @@ class DatFile(SoundFile):
 
         file_header = file_header.decode('utf-8').split("\n")
 
-        self.header["site"] = file_header[3].split()[1]
-        self.header["bytes_per_sample"] = int(re.findall(r'(\d*)\s*[bB]', file_header[6])[0])
-        self.header["samples"] = int(int(file_header[7].split()[1]))
-        self.header["sampling_frequency"] = float(file_header[5].split()[1])
-        self._original_samples = int(file_header[7].split()[1])
-        duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
-        self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
+        if len(file_header) > 9:
+            self.header["site"] = file_header[3].split()[1]
+            self.header["bytes_per_sample"] = int(re.findall(r'(\d*)\s*[bB]', file_header[6])[0])
+            self.header["samples"] = int(int(file_header[7].split()[1]))
+            self.header["sampling_frequency"] = float(file_header[5].split()[1])
+            self._original_samples = int(file_header[7].split()[1])
+            duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
+            self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
+        else:  # HYDROBS
+            self.header["site"] = self.path.split("/")[-2]
+            self.header["bytes_per_sample"] = 3
+            self.header["samples"] = int((os.path.getsize(self.path) - 400) / 3)
+            self.header["sampling_frequency"] = 240
+            self.header["duration"] = datetime.timedelta(
+                seconds=self.header["samples"] / self.header["sampling_frequency"])
+            date = file_header[1].split()
+
+
         if self.raw:
-            if '200d' in file_header[11].split()[-2] :
+            if '200d' in file_header[11].split()[-2] or '200j' in file_header[11].split()[-2] :
                 #str start date is not correct in raw data since it comes from user computer used to start recording
                 cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
                 try :
-                    offset = int(file_header[11].split()[-1][:-1])*200 #cylcle reset every 200days
+                    offset = int(file_header[11].split()[-1][:-1])*200 #cycle reset every 200days
                 except :
                     # warnings.warn('Data not corrected from offset')
                     offset = int(file_header[11].split()[-1])*200
@@ -221,12 +230,20 @@ class DatFile(SoundFile):
                 #str start date is not correct in raw data since it comes from user computer used to start recording
                 cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
                 try :
-                    offset = int(file_header[11].split()[-1][:-1])*5 #cylcle reset every 5days
+                    offset = int(file_header[11].split()[-1][:-1])*5 #cycle reset every 5days
                 except :
                     # warnings.warn('Data not corrected from offset')
                     offset = int(file_header[11].split()[-1])*5
+            elif '100d' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*100 #cycle reset every 100days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*100
             else :
-                warnings.warn('CRITICAL UNKNOWN cylcle reset ')
+                warnings.warn('CRITICAL UNKNOWN cycle reset ')
             #forced raw mode header :int(file_header[11].split()[-1])
             gps_zero = ' '.join(file_header[8].split()[-4:])
             locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
@@ -238,14 +255,23 @@ class DatFile(SoundFile):
         else:
             # 9 is 1st sample, 10 is start date
             date = file_header[10].split()
-            date = ' '.join(date[-4:])
+
+
             locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
-            if "." in date:
-                self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S.%f %Y")
+            french_to_en = {"fév": "feb", "avr": "apr", "mai": "may", "jui": "jun", "aoû": "aug", "déc": "dec"}
+            if date[-4] in french_to_en:
+                date[-4] = french_to_en[date[-4]]
+
+            if "." in date[-2]:
+                if len(d := date[-2].split(".")[-1]) < 6:
+                    to_add = 6 - len(d)
+                    date[-2] += "0" * to_add
+                date_str = ' '.join(date[-4:])
+                self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S.%f %Y")
             else:
                 # handle the case where no decimal is present
-                self.header["start_date"] = datetime.datetime.strptime(date, "%b %d %H:%M:%S %Y")
-
+                date_str = ' '.join(date[-4:])
+                self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S %Y")
         leap = int(get_leap_second(self.header["start_date"]))  # get the current GPS / TAI shift
         self.header["start_date"] -= datetime.timedelta(seconds=leap)
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
@@ -306,7 +332,6 @@ class WFile(SoundFile):
         :param points_to_keep: Number of points to keep. None in case we keep everything after the start.
         :return: The required data.
         """
-        # print(self.path)
         with (open(self.path, 'rb') as file):
             offset_points_start = 0 if offset_points_start is None else offset_points_start
             if offset_points_start > self.header["samples"]:
