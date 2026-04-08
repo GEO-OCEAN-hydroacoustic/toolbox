@@ -1,5 +1,6 @@
 import datetime
 import os
+import warnings
 import wave
 
 import numpy as np
@@ -175,9 +176,9 @@ class DatFile(SoundFile):
     """ Class representing .dat files specific of GEO-OCEAN lab. Relevant metadata are in the files headers.
     """
     EXTENSION = "DAT"
-    TO_VOLT = 5.0 / 2 ** 24  # we consider a fixed dynamic range of 5V on 24 bits
+    TO_VOLT = 5.0 / 2 ** 24  # we consider a fixed dynamic range of 5V (+/- 2.5V) on 24 bits
 
-    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None):
+    def __init__(self, path, sensitivity=-163.5, skip_data=False, identifier=None, raw=True):
         """ Constructor reading file metadata and content if required.
         :param path: The path of the file.
         :param sensitivity: Sensitivity of the sensor.
@@ -186,6 +187,7 @@ class DatFile(SoundFile):
         path is used.
         """
         self.sensitivity = sensitivity
+        self.raw = raw
         super().__init__(path, skip_data, identifier)
 
     def _read_header(self):
@@ -199,14 +201,12 @@ class DatFile(SoundFile):
 
         if len(file_header) > 9:
             self.header["site"] = file_header[3].split()[1]
-            self.header["bytes_per_sample"] = int(re.findall('(\d*)\s*[bB]', file_header[6])[0])
+            self.header["bytes_per_sample"] = int(re.findall(r'(\d*)\s*[bB]', file_header[6])[0])
             self.header["samples"] = int(int(file_header[7].split()[1]))
             self.header["sampling_frequency"] = float(file_header[5].split()[1])
             self._original_samples = int(file_header[7].split()[1])
             duration_micro = 10 ** 6 * float(file_header[7].split()[1]) / float(file_header[5].split()[1])
             self.header["duration"] = datetime.timedelta(microseconds=duration_micro)
-            # 9 is 1st sample, 10 is start date
-            date = file_header[10].split()
         else:  # HYDROBS
             self.header["site"] = self.path.split("/")[-2]
             self.header["bytes_per_sample"] = 3
@@ -216,21 +216,62 @@ class DatFile(SoundFile):
                 seconds=self.header["samples"] / self.header["sampling_frequency"])
             date = file_header[1].split()
 
-        locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
-        french_to_en = {"fév": "feb", "avr": "apr", "mai": "may", "jui": "jun", "aoû": "aug", "déc": "dec"}
-        if date[-4] in french_to_en:
-            date[-4] = french_to_en[date[-4]]
 
-        if "." in date[-2]:
-            if len(d := date[-2].split(".")[-1]) < 6:
-                to_add = 6 - len(d)
-                date[-2] += "0" * to_add
-            date_str = ' '.join(date[-4:])
-            self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S.%f %Y")
+        if self.raw:
+            if '200d' in file_header[11].split()[-2] or '200j' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*200 #cycle reset every 200days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*200
+            elif '005d' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*5 #cycle reset every 5days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*5
+            elif '100d' in file_header[11].split()[-2] :
+                #str start date is not correct in raw data since it comes from user computer used to start recording
+                cycle = 10 ** 6 * float(file_header[11].split()[1]) / float(file_header[5].split()[1])
+                try :
+                    offset = int(file_header[11].split()[-1][:-1])*100 #cycle reset every 100days
+                except :
+                    # warnings.warn('Data not corrected from offset')
+                    offset = int(file_header[11].split()[-1])*100
+            else :
+                warnings.warn('CRITICAL UNKNOWN cycle reset ')
+            #forced raw mode header :int(file_header[11].split()[-1])
+            gps_zero = ' '.join(file_header[8].split()[-4:])
+            locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
+            if "." in gps_zero:
+                gps_zero = datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S.%f %Y")
+            else:
+                gps_zero = datetime.datetime.strptime(gps_zero, "%b %d %H:%M:%S %Y")
+            self.header["start_date"] = gps_zero + datetime.timedelta(microseconds=cycle)+datetime.timedelta(days=offset)
         else:
-            # handle the case where no decimal is present
-            date_str = ' '.join(date[-4:])
-            self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S %Y")
+            # 9 is 1st sample, 10 is start date
+            date = file_header[10].split()
+
+
+            locale.setlocale(locale.LC_TIME, "C")  # ensure we use english months names
+            french_to_en = {"fév": "feb", "avr": "apr", "mai": "may", "jui": "jun", "aoû": "aug", "déc": "dec"}
+            if date[-4] in french_to_en:
+                date[-4] = french_to_en[date[-4]]
+
+            if "." in date[-2]:
+                if len(d := date[-2].split(".")[-1]) < 6:
+                    to_add = 6 - len(d)
+                    date[-2] += "0" * to_add
+                date_str = ' '.join(date[-4:])
+                self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S.%f %Y")
+            else:
+                # handle the case where no decimal is present
+                date_str = ' '.join(date[-4:])
+                self.header["start_date"] = datetime.datetime.strptime(date_str, "%b %d %H:%M:%S %Y")
         leap = int(get_leap_second(self.header["start_date"]))  # get the current GPS / TAI shift
         self.header["start_date"] -= datetime.timedelta(seconds=leap)
         self.header["end_date"] = self.header["start_date"] + self.header["duration"]
