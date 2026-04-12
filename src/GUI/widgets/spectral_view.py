@@ -318,6 +318,18 @@ class SpectralView(QtWidgets.QWidget):
         self.segment_date_slider.setMinimum(0)
         self.segment_date_slider.setMaximum((end - start).total_seconds())
 
+    def _draw_picks(self, picks_dict, delta, color, alpha):
+        """Draw vertical lines for picks of the current station within the visible window."""
+        if self.station not in picks_dict:
+            return
+        l = picks_dict[self.station]
+        idx = max(np.searchsorted(l, self.start, side="left") - 1, 0)
+        while idx < len(l) and l[idx] < self.end:
+            if l[idx] > self.start:
+                t = (l[idx] - (self.start + delta)).total_seconds()
+                self.mpl.axes.axvline(t, color=color, alpha=alpha, linestyle="--")
+            idx += 1
+
     def _update_data(self):
         """ Update the spectrogram value.
         :return: None.
@@ -347,24 +359,14 @@ class SpectralView(QtWidgets.QWidget):
             self.mpl.axes.set_xlabel('t (s)')
 
             # get previously picked events
-            if self.station in self.spectralViewer.loc_res:
-                l = self.spectralViewer.loc_res[self.station]
-                idx = np.searchsorted(l, self.start, side="left") - 1
-                idx = max(idx, 0)
-                while idx < len(l) and l[idx] < self.end:
-                    if l[idx] > self.start:
-                        t = (l[idx] - (self.start + delta)).total_seconds()
-                        self.mpl.axes.axvline(t, color="bisque", alpha=0.5, linestyle="--")
-                    idx += 1
-            if self.station in self.spectralViewer.loc_res_single:
-                l = self.spectralViewer.loc_res_single[self.station]
-                idx = np.searchsorted(l, self.start, side="left") - 1
-                idx = max(idx, 0)
-                while idx < len(l) and l[idx] < self.end:
-                    if l[idx] > self.start:
-                        t = (l[idx] - (self.start + delta)).total_seconds()
-                        self.mpl.axes.axvline(t, color="yellow", alpha=0.25, linestyle="--")
-                    idx += 1
+            pick_sources = [
+                (self.spectralViewer.loc_res, "bisque", 0.5),
+                (self.spectralViewer.loc_res_single, "yellow", 0.25),
+                (self.spectralViewer.loc_res_prev, "deepskyblue", 0.5),
+                (self.spectralViewer.loc_res_single_prev, "lime", 0.25),
+            ]
+            for picks_dict, color, alpha in pick_sources:
+                self._draw_picks(picks_dict, delta, color, alpha)
 
     def _draw(self):
         """ Update the plot widget.
@@ -446,7 +448,7 @@ class SpectralView(QtWidgets.QWidget):
             # name : station_YYYYMMDD_hhmmss_durations
             station_str = f"{self.station.dataset}_{self.station.name}" if self.station.dataset else self.station.name
             name = f'{station_str}_{(segment_center-delta).strftime("%Y%m%d_%H%M%S")}_{int((delta*2).total_seconds())}s.wav'
-            scipy.io.wavfile.write(f"../../data/GUI/{name}", int(self.manager.sampling_f), to_write)
+            scipy.io.wavfile.write(f"../../data/GUI/{name}", int(self.manager.sampling_f * 20), to_write)
             # play the sound 20x faster
             sounddevice.play(to_write, int(self.manager.sampling_f * 20))
 

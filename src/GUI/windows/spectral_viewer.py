@@ -47,7 +47,9 @@ class SpectralViewerWindow(QMainWindow):
         self.events_path = events_path
         self.loc_res = {}  # contains the pick dates of the events located with the tool
         self.loc_res_single = {}  # contains the pick dates of the previous single-station picks
-
+        # previous session
+        self.loc_res_prev = {}
+        self.loc_res_single_prev = {}
 
         self.loc_res_path = loc_res_path
 
@@ -66,11 +68,15 @@ class SpectralViewerWindow(QMainWindow):
                 for sname, date in [line[i:i+2] for i in range(6, len(line)-1, 2)]:
                     if sname != "" and date != "":
                         date = datetime.datetime.strptime(date, "%Y%m%d_%H%M%S")
-                        s = self.stations.by_name(sname).by_date(date)[0]
-                        self.loc_res.setdefault(s, []).append(date)
-            for s in self.loc_res.keys():
-                self.loc_res[s] = sorted(self.loc_res[s])
-        single_path = self.loc_res_path[:-4] + "_Pn.csv"
+                        s = self.stations.by_name(sname).by_date(date)
+                        if len(s) != 1:
+                            print(f"Unable to find station {sname} for date {date}")
+                            continue
+                        s = s[0]
+                        self.loc_res_prev.setdefault(s, []).append(date)
+            for s in self.loc_res_prev.keys():
+                self.loc_res_prev[s] = sorted(self.loc_res_prev[s])
+        single_path = self.loc_res_path[:-4] + "_single.csv"
         if Path(single_path).exists():
             with open(single_path, "r") as f:
                 lines = f.readlines()
@@ -83,9 +89,9 @@ class SpectralViewerWindow(QMainWindow):
                 if len(s)==0:
                     print(f"Unable to find station {line[0]} active at {line[1]}")
                 s = s[0]
-                self.loc_res_single.setdefault(s, []).append(date)
-            for s in self.loc_res_single.keys():
-                self.loc_res_single[s] = sorted(self.loc_res_single[s])
+                self.loc_res_single_prev.setdefault(s, []).append(date)
+            for s in self.loc_res_single_prev.keys():
+                self.loc_res_single_prev[s] = sorted(self.loc_res_single_prev[s])
 
         self.setWindowTitle(u"Acoustic viewer")
 
