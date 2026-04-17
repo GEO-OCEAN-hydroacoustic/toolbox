@@ -88,6 +88,7 @@ class SpectralViewerWindow(QMainWindow):
                 s = self.stations.by_name(line[0]).by_date(date)
                 if len(s)==0:
                     print(f"Unable to find station {line[0]} active at {line[1]}")
+                    continue
                 s = s[0]
                 self.loc_res_single_prev.setdefault(s, []).append(date)
             for s in self.loc_res_single_prev.keys():
