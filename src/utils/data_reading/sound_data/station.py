@@ -1,17 +1,32 @@
 import datetime
 import itertools
 from pathlib import Path
-
 import glob2
 import numpy as np
 import pandas as pd
 import yaml
 
-from utils.data_reading.sound_data.sound_file_manager import make_manager
+from src.utils.data_reading.sound_data.sound_file_manager import make_manager
 
 class Station:
-    def __init__(self, path, name=None, lat=None, lon=None, date_start=None, date_end=None, dataset=None,
+    @property
+    def depth(self):
+        return getattr(self, '_depth', 0.0)
+    
+    @depth.setter
+    def depth(self, value):
+        self._depth = float(value) if value is not None else 0.0
+
+    def __init__(self, path, name=None, lat=None, lon=None, depth=None, date_start=None, date_end=None, dataset=None,
                  initialize_metadata=False, other_kwargs=None):
+        other_kwargs = other_kwargs or {}
+        
+        # Récupérer la profondeur depuis other_kwargs si elle n'est pas fournie directement
+        if depth is None and 'depth' in other_kwargs:
+            depth = other_kwargs['depth']
+            del other_kwargs['depth']  # Supprimer la profondeur de other_kwargs après l'avoir utilisée
+        
+        self.depth = depth  # Ceci utilisera le setter de la propriété
         self.manager = None
         self.path = path
         assert isinstance(path, str)
@@ -46,18 +61,30 @@ class Station:
         if self.path and not self.manager:
             self.manager = make_manager(self.path, self.other_kwargs)
 
-    def get_pos(self):
-        """ Get an array representing the position of the station.
-        :return: An array giving the position of the station.
-        """
-        return [self.lat, self.lon]
+    def get_pos(self, include_depth=False):
+        if not include_depth:
+            return [self.lat, self.lon]
+        return [self.lat, self.lon, self.depth]
 
     def light_copy(self):
         """ Make a copy of this station, only including metadata.
         :return: A copy of self containing the name, lat, lon, dates, path and dataset of the station.
         """
-        return Station(self.path, self.name, self.lat, self.lon, self.date_start, self.date_end, self.dataset,
+        return Station(self.path, self.name, self.lat, self.lon, self.depth, self.date_start, self.date_end, self.dataset,
                        other_kwargs=self.other_kwargs)
+
+    def get_clock_error(self, date=None, ref_date=None,drift_ppm=None):
+        """
+        Calculate the accumulated clock error after a given time
+        """
+        if ref_date is None:
+            time_elapsed_seconds = (date -  self.date_start).total_seconds()
+        else :
+            time_elapsed_seconds = (date - ref_date).total_seconds()
+        if drift_ppm is not None:
+            return time_elapsed_seconds * drift_ppm * 1e-6
+
+        return self.other_kwargs["clock_drift_ppm"] * 1e-6 * time_elapsed_seconds
 
     def __str__(self):
         return f"{self.dataset}_{self.name}"
@@ -73,7 +100,7 @@ class Station:
         return hash((self.name, self.lat, self.lon, self.date_start, self.date_end))
 
 class StationsCatalog():
-    def __init__(self, file=None, depth=0, max_depth=3):
+    def __init__(self, file=None, min_depth=0, max_depth=3):
         self.stations = []
 
         # if a file was given, and it is a .yaml or .csv, read it
@@ -84,10 +111,10 @@ class StationsCatalog():
             elif ".csv" in file:
                 self.load_csv(file)
             if Path(file).is_dir():
-                if depth < max_depth:
+                if min_depth < max_depth:
                     catalogs = []
                     for path in glob2.glob(f"{file}/*"):
-                        catalogs.append(StationsCatalog(path, depth+1, max_depth))
+                        catalogs.append(StationsCatalog(path, min_depth+1, max_depth))
                     self.stations = list(itertools.chain.from_iterable(catalogs))
 
     def load_yaml(self, yaml_file):
@@ -112,17 +139,55 @@ class StationsCatalog():
                 if station_yaml["lat"].strip() != "":
                     lat, lon = float(station_yaml["lat"]), float(station_yaml["lon"])
                     del station_yaml["lat"], station_yaml["lon"]
-
-                st = Station(f"{path}/{station_name}", station_name, lat, lon, date_start, date_end, dataset,
+                depth = None
+                if station_yaml.get("depth", "").strip() != "":
+                    depth = float(station_yaml["depth"])
+                    del station_yaml["depth"] #YAML never had this
+                st = Station(f"{path}/{station_name}", station_name, lat, lon, depth, date_start, date_end, dataset,
                              other_kwargs=station_yaml)
                 self.stations.append(st)
 
     def load_csv(self, csv_file):
-        data = pd.read_csv(csv_file, parse_dates=["date_start", "date_end"])
+        data = pd.read_csv(csv_file, 
+                          parse_dates=["date_start", "date_end"],
+                          dtype={"depth": float})  # forcer le type float pour depth
+        # parent_path = Path(csv_file).parent
+
+        # for i in data.index:
+        #     path = f"{parent_path}/{data.loc[i]['dataset']}/{data.loc[i]['station_name']}"
+        #     data.loc[i, "path"] = str(path)
+
+        #     start = data.loc[i]["date_start"].to_pydatetime()
+        #     end = data.loc[i]["date_end"].to_pydatetime()
+
+        #     start = None if pd.isnull(start) else start
+        #     end = None if pd.isnull(end) else end
+
+        #     # Gestion explicite de la profondeur
+        #     depth_value = data.loc[i]["depth"]
+        #     depth = float(depth_value) if pd.notnull(depth_value) else None
+
+        #     # kwargs is used to transfer other information, e.g. sensitivity
+        #     exclude_keys = ["station_name", "lat", "lon", "depth", "date_start", "date_end", "dataset"]
+        #     kwargs = {c: data.loc[i][c] for c in data.columns if c not in exclude_keys}
+
+        #     st = Station(
+        #         path=data.loc[i, "path"],
+        #         name=data.loc[i, "station_name"],
+        #         lat=float(data.loc[i, "lat"]),
+        #         lon=float(data.loc[i, "lon"]),
+        #         depth=depth,  # Utilisation de la valeur traitée
+        #         date_start=start,
+        #         date_end=end,
+        #         dataset=str(data.loc[i, "dataset"]),
+        #         other_kwargs=kwargs
+        #     )
+
+        #     self.stations.append(st)
         parent_path = Path(csv_file).parent
 
         for i in data.index:
-            path = parent_path / data.loc[i]["dataset"] / data.loc[i]["station_name"]
+            path = f"{parent_path}/{data.loc[i]['dataset']}/{data.loc[i]['station_name']}"
             data.loc[i, "path"] = str(path)
 
             start = data.loc[i]["date_start"].to_pydatetime()
@@ -131,13 +196,26 @@ class StationsCatalog():
             start = None if pd.isnull(start) else start
             end = None if pd.isnull(end) else end
 
-            # kwargs is used to transfer other information, e.g. sensitivity
-            kwargs = {c:data.loc[i][c] for c in data.columns}
+            # Gestion explicite de la profondeur
+            depth_value = data.loc[i]["depth"]
+            depth = float(depth_value) if pd.notnull(depth_value) else None
 
-            st = Station(data.loc[i]["path"], data.loc[i]["station_name"],
-                         data.loc[i]["lat"], data.loc[i]["lon"],
-                         start, end, data.loc[i]["dataset"],
-                         other_kwargs=kwargs)
+            # kwargs is used to transfer other information, e.g. sensitivity
+            exclude_keys = ["station_name", "lat", "lon", "depth", "date_start", "date_end", "dataset"]
+            kwargs = {c: data.loc[i][c] for c in data.columns if c not in exclude_keys}
+
+            st = Station(
+                path=data.loc[i, "path"],
+                name=data.loc[i, "station_name"],
+                lat=float(data.loc[i, "lat"]),
+                lon=float(data.loc[i, "lon"]),
+                depth=depth,  # Utilisation de la valeur traitée
+                date_start=start,
+                date_end=end,
+                dataset=str(data.loc[i, "dataset"]),
+                other_kwargs=kwargs
+            )
+
             self.stations.append(st)
 
     def add_station(self, station):
@@ -150,7 +228,7 @@ class StationsCatalog():
     def by_dataset(self, dataset):
         res = StationsCatalog()
         for st in self.stations:
-            if st.dataset == dataset:
+            if st.dataset in dataset:
                 res.add_station(st)
         return res
 
@@ -236,9 +314,9 @@ class StationsCatalog():
         return res
 
     def to_dataframe(self):
-        df = pd.DataFrame(columns=["station"])
+        df = pd.DataFrame(columns=["station", "lat", "lon", "depth"])
         for i, station in enumerate(self.stations):
-            df.loc[i] = [station.name, station.lat, station.lon]
+            df.loc[i] = [station.name, station.lat, station.lon, station.depth]
         return df
 
     def get_coordinate_list(self):

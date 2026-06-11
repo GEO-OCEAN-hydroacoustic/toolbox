@@ -95,7 +95,10 @@ class GridSphericalSoundModel(SphericalSoundModel):
 
     def localize_common_source(self, sensors_positions, detection_times, x_min=-90, y_min=-180, x_max=90,
                              y_max=180, t_min=-36_000, initial_pos=None, velocities=None):
-        l = self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
-                             y_max, t_min, initial_pos, len(sensors_positions) * [self.constant_velocity])
+        # l = self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
+        #                      y_max, t_min, initial_pos, len(sensors_positions) * [self.constant_velocity])
+        # return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
+        #                      y_max, t_min, l.x)
+
         return self._localize_common_source(sensors_positions, detection_times, x_min, y_min, x_max,
-                             y_max, t_min, l.x)
+                                        y_max, t_min, initial_pos, velocities)
