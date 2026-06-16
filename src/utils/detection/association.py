@@ -297,7 +297,7 @@ def init_worker(global_data, recursion_limit=5000):
     global SAVE_PATH_ROOT, STATIONS, FIRSTS_DETECTIONS, LASTS_DETECTIONS
     global MAX_TDoA, DETECTIONS, MERGE_DELTA_S, TDoA, TDoA_UNCERTAINTIES
     global REQ_CLOSEST_STATIONS
-    sys.setrecursionlimit(recursion_limit)
+    sys.setrecursionlimit(recursion_limit)  # <- Fix cause n°1
     (SAVE_PATH_ROOT, STATIONS, FIRSTS_DETECTIONS, LASTS_DETECTIONS,
      MAX_TDoA, DETECTIONS, MERGE_DELTA_S, TDoA, TDoA_UNCERTAINTIES,
      REQ_CLOSEST_STATIONS) = global_data
