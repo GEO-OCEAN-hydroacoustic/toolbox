@@ -14,9 +14,9 @@ from utils.physics.sound_model.spherical_sound_model import GridSphericalSoundMo
 # ──────────────────────────────────────────────
 
 # Data sources
-DATASETS_CSV = "../data/demo/sound_data"           # station metadata CSV, directory, or None
-EVENTS_PATH = "../data/GUI/events.yaml"             # event catalog to visualize, or None
-OUTPUT_PATH = "../data/GUI/localizations.csv"       # where picked events are saved
+DATASETS_CSV = "../../data/dataset_demo.csv"            # station metadata CSV, directory, or None
+EVENTS_PATH = "../../data/GUI/events.yaml"             # event catalog to visualize, or None
+OUTPUT_PATH = "../../data/GUI/localizations.csv"       # where picked events are saved
 
 # Sound model
 VELOCITY_GRID_DIR = None           # directory containing monthly velocity grids. If None, homogeneous speed is used.

@@ -1,145 +1,144 @@
-import copy
 import pickle
-from pathlib import Path
-
+from multiprocessing import cpu_count, Pool
+from scipy.interpolate import griddata
 import numpy as np
 import datetime
 from matplotlib import pyplot as plt
+from utils.physics.geodesic.distance import distance_point_point
+import sys
+import numpy as np
+import datetime
+from pathlib import Path
+
+def squarize(coordinates, weights, lat_bounds, lon_bounds, size=1000):
+    grid_lat = np.linspace(lat_bounds[0], lat_bounds[-1], size)
+    grid_lon = np.linspace(lon_bounds[0], lon_bounds[-1], size)
+    grid_lon2d, grid_lat2d = np.meshgrid(grid_lon, grid_lat)
+    # Interpolation des poids sur une grille régulière
+    grid = griddata(
+        coordinates, weights, (grid_lat2d, grid_lon2d),
+        method='nearest'
+    )
+    return grid, grid_lat, grid_lon
+
 
 # given a list of detections, gets the list of the ones that are closest enough to a given date
-def find_detections(detection_list, target_date, tolerance):
+def find_detections(detection_list, target_date, tolerance_before, tolerance_after):
     res = []
-    idx = np.searchsorted(detection_list, target_date - tolerance, side="left") - 1
+
+    idx = np.searchsorted(detection_list, target_date + tolerance_before, side="left") - 1
     idx = max(idx, 0)
-    while idx < len(detection_list) and detection_list[idx] < target_date + tolerance:
-        if detection_list[idx] > target_date - tolerance:
+    while idx < len(detection_list) and detection_list[idx] < target_date + tolerance_after:
+        if detection_list[idx] > target_date + tolerance_before:
             res.append(idx)
         idx += 1
     return res
 
-to_tdelta = lambda t : datetime.timedelta(seconds=t)
+
+to_tdelta = lambda t: datetime.timedelta(seconds=float(t))
+
 
 # given two detections (station+date), get the positions on a grid that may be the source
-def get_valid_grid(s1, s2, date1, date2, valid_grid, grid_station_couple_travel_time, grid_tolerance):
+def get_valid_grid(s1, s2, date1, date2, valid_grid, TDoA, TDoA_uncertainties):
     diff = (date2 - date1).total_seconds()
-    grid = grid_station_couple_travel_time[s1][s2]
+    grid = TDoA[s1][s2][date1.month - 1]
 
     if valid_grid is not None:
         grid = np.where(valid_grid, grid, np.nan)
 
     differences = np.abs(diff - grid)
-    valid_grid = (differences < grid_tolerance)
+    valid_grid = (differences < TDoA_uncertainties[s1][s2][date1.month - 1])
 
     return differences, valid_grid
 
+
 # given an association and a new detection, update the grid of possible source locations
-def update_valid_grid(current_association, current_valid_grid, new_station, new_date, grid_station_couple_travel_time,
-                      grid_tolerance, save_path=None, lon_bounds=None, lat_bounds=None):
+def update_valid_grid(current_association, current_valid_grid, new_station, new_date, TDoA, TDoA_uncertainties,
+                      save_path=None, lon_bounds=None, lat_bounds=None, grid_to_coords=None, new_idx=None):
     difference_grids, valid_grids = [], []
-    for si, datei in current_association.items():
+    for si, (datei, idxi) in current_association.items():
         difference_grid_new, valid_grid_new = get_valid_grid(si, new_station, datei, new_date, current_valid_grid,
-                                                             grid_station_couple_travel_time, grid_tolerance)
+                                                             TDoA, TDoA_uncertainties)
         valid_grids.append(valid_grid_new)
         difference_grids.append(difference_grid_new)
         current_valid_grid = valid_grids[-1] if save_path is None else current_valid_grid
     grid = np.all(valid_grids, axis=0) if save_path is not None else current_valid_grid
 
     if save_path is not None and np.count_nonzero(~np.isnan(difference_grid := np.max(difference_grids, axis=0))) > 0:
-        res = '_'.join([f'{s.name}-{date.strftime("%Y%m%d_%H%M%S")}' for s, date in current_association.items()])
-        save_path_grid = f'{save_path}/{res}_{new_station.name}-{new_date.strftime("%Y%m%d_%H%M%S")}.png'
+        asso = list(current_association.items())
+        res = f'{asso[0][0].name}-{asso[0][1][1]}_{len(asso):02d}'
+        res = res + '_'.join([''] + [f'{s.name}-{idx}' for s, (date, idx) in asso[1:]])
+        save_path_grid = f'{save_path}/{res}_{new_station.name}-{new_idx}.png'
 
-        fig, ax = plt.subplots()
-
-        extent = (lon_bounds[0], lon_bounds[-1], lat_bounds[0], lat_bounds[-1])
-        im = ax.imshow(difference_grid[::-1], cmap="inferno", extent=extent, interpolation=None, vmin=0,
-                       vmax=10*grid_tolerance)
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sq = squarize(grid_to_coords, difference_grid, lat_bounds, lon_bounds)
+        im = ax.imshow(sq[::-1], cmap="inferno", vmin=0,
+                       extent=(lon_bounds[0], lon_bounds[-1], lat_bounds[0], lat_bounds[-1]))
+        xticks = np.arange(np.floor(lon_bounds[0] / 5) * 5, np.ceil(lon_bounds[-1] / 5) * 5 + 1, 5)
+        yticks = np.arange(np.floor(lat_bounds[0] / 5) * 5, np.ceil(lat_bounds[-1] / 5) * 5 + 1, 5)
+        ax.set_xticks(xticks)
+        ax.set_yticks(yticks)
         for s in current_association.keys():
-            ax.plot(s.get_pos()[1], s.get_pos()[0], 'rx')
-            ax.annotate(s.name, xy=(s.get_pos()[1], s.get_pos()[0]), textcoords="data", color='r')
-        ax.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx')
-        ax.annotate(new_station.name, xy=(new_station.get_pos()[1], new_station.get_pos()[0]), textcoords="data",
-                    color='r')
+            p = s.get_pos()
+            ax.plot(p[1], p[0], 'yx', alpha=0.75, markersize=10, markeredgewidth=3)
+            ax.annotate(s.name, xy=(p[1], p[0]),
+                        xytext=(p[1] - (lon_bounds[1] - lon_bounds[0]) / 30,
+                                p[0] + (lat_bounds[1] - lat_bounds[0]) / 50),
+                        textcoords="data", color='y', alpha=0.9, weight='bold')
 
-        fig.colorbar(im, orientation='vertical')
-        plt.tight_layout()
-        plt.savefig(save_path_grid)
+        s, p = new_station, new_station.get_pos()
+        ax.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx', alpha=0.75, markersize=10, markeredgewidth=3)
+        ax.annotate(s.name, xy=(p[1], p[0]),
+                    xytext=(p[1] - (lon_bounds[1] - lon_bounds[0]) / 30, p[0] + (lat_bounds[1] - lat_bounds[0]) / 50),
+                    textcoords="data", color='g', alpha=1, weight='bold')
+
+        cbar = plt.colorbar(im, fraction=0.0415, pad=0.04)
+        cbar.set_label('|expected TDoA - observed TDoA| (s)', rotation=270, labelpad=20)
+        ax.set_title(f"TDoA differences grid")
+        ax.set_xlabel("lon (°)")
+        ax.set_ylabel("lat (°)")
+        plt.savefig(save_path_grid, dpi=500, bbox_inches='tight')
         plt.close()
     return grid, difference_grids
 
-# given an association and a new detection, update the grid of possible source locations
-def update_valid_grid_gt(current_association, current_valid_grid, new_station, new_date, grid_station_couple_travel_time,
-                      grid_tolerance, save_path=None, lon_bounds=None, lat_bounds=None, gt=None):
-    difference_grids, valid_grids = [], []
-    for si, datei in current_association.items():
-        difference_grid_new, valid_grid_new = get_valid_grid(si, new_station, datei, new_date, current_valid_grid,
-                                                             grid_station_couple_travel_time, grid_tolerance)
-        valid_grids.append(valid_grid_new)
-        difference_grids.append(difference_grid_new)
-        current_valid_grid = valid_grids[-1] if save_path is None else current_valid_grid
-    grid = np.all(valid_grids, axis=0) if save_path is not None else current_valid_grid
 
-    if save_path is not None and np.count_nonzero(~np.isnan(difference_grid := np.max(difference_grids, axis=0))) > 0:
-        res = '_'.join([f'{s.name}-{date.strftime("%Y%m%d_%H%M%S")}' for s, date in current_association.items()])
-        save_path_grid = f'{save_path}_{res}_{new_station.name}-{new_date.strftime("%Y%m%d_%H%M%S")}.png'
-
-        fig, ax = plt.subplots()
-
-        extent = (lon_bounds[0], lon_bounds[-1], lat_bounds[0], lat_bounds[-1])
-        im = ax.imshow(difference_grid[::-1], cmap="inferno", extent=extent, interpolation=None, vmin=0,
-                       vmax=10*grid_tolerance)
-        for s in current_association.keys():
-            ax.plot(s.get_pos()[1], s.get_pos()[0], 'rx')
-            ax.annotate(s.name, xy=(s.get_pos()[1], s.get_pos()[0]), textcoords="data", color='r')
-        ax.plot(new_station.get_pos()[1], new_station.get_pos()[0], 'gx')
-        ax.annotate(new_station.name, xy=(new_station.get_pos()[1], new_station.get_pos()[0]), textcoords="data",
-                    color='r')
-        ax.plot(gt[1], gt[0], 'o', color="bisque")
-        fig.colorbar(im, orientation='vertical')
-        plt.tight_layout()
-        plt.savefig(save_path_grid)
-        plt.close()
-    return grid, difference_grids
-
-def compute_candidates(stations_to_update, current_association, detections, station_max_travel_time, generic_tolerance):
+def compute_candidates(stations_to_update, current_association, detections, max_TDoA, generic_tolerance):
     candidates = {}
-
+    date1 = next(iter(current_association.values()))[0]
     for s in stations_to_update:
         c = []
-        for station_anchor, date_anchor in current_association.items():
-            c.append(set(find_detections(detections[s][:,0], date_anchor, to_tdelta(station_max_travel_time[s][station_anchor]) + to_tdelta(generic_tolerance))))
+        for station_anchor, (date_anchor, idx_anchor) in current_association.items():
+            t1 = -to_tdelta(max_TDoA[s][station_anchor][date1.month - 1])
+            t2 = to_tdelta(max_TDoA[station_anchor][s][date1.month - 1])
+            t1 -= to_tdelta(generic_tolerance)
+            t2 += to_tdelta(generic_tolerance)
+
+            c.append(set(find_detections(detections[s][:, 0], date_anchor, t1, t2)))
         candidates[s] = list(set.intersection(*c))
     return candidates
 
+
 # check if the association is valid (if it was never seen) and save it in results
 def update_results(date1, current_association, valid_points, results,
-                   grid_station_couple_travel_time, compute_costs=False):
-    res = np.array([[s, d] for s, d in current_association.items()])
-    res = res[np.argsort(res[:, 1])]
+                   TDoA, TDoA_uncertainties, compute_costs=False):
+    res = np.array([[s.idx, idx] for s, (d, idx) in current_association.items()])
 
     if compute_costs:
         valid_points_2 = []
-        for i, j in valid_points:
+        for i in valid_points:
             diffs = []
             for s1, d1 in res:
                 for s2, d2 in res:
                     if s1 != s2:
-                        diffs.append(abs(grid_station_couple_travel_time[s1][s2][i,j] - (d2 - d1).total_seconds()))
-            valid_points_2.append([i, j, np.max(diffs)])
+                        diffs.append(abs(TDoA[s1][s2][date1.month - 1][i] - (d2 - d1).total_seconds()) -
+                                     TDoA_uncertainties[s1][s2][date1.month - 1][i])
+            valid_points_2.append([i, np.max(diffs)])
         valid_points = valid_points_2
 
-    results.setdefault(date1, []).append((res, np.array(valid_points)))
+    results.append((res, np.array(valid_points)))
 
-# check if the association was never seen
-def association_is_new(association, new_date, association_hashlist):
-    res = [d for _, d in association.items()] + [new_date]
-    s = np.sum([int(d.timestamp() * 1_000) for d in res])
-    if s in association_hashlist:
-        return False
-    association_hashlist.add(s)
-    return True
 
-def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0.1, min_p_tissnet_secondary=0.1,
-                    merge_delta=datetime.timedelta(seconds=5)):
+def load_detections(det_files, stations, min_p_tissnet_secondary=0.1, merge_delta=datetime.timedelta(seconds=5)):
     detections = {}
     for det_file in det_files:
         station_dataset, station_name = det_file[:-4].split("/")[-1].split("_")
@@ -157,6 +156,8 @@ def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0
                     d.append(pickle.load(f))
                 except EOFError:
                     break
+        if len(d) == 1:
+            d = d[0]
         d = np.array(d)
         d = d[:, :2]
         d = d[d[:, 1] > min_p_tissnet_secondary]
@@ -166,53 +167,213 @@ def load_detections(det_files, stations, detections_dir, min_p_tissnet_primary=0
         new_d = [d[0]]
         for i in range(1, len(d)):
             # check this event is far enough from the previous one
-            if d[i, 0] - d[i - 1, 0] > merge_delta:
-                # check this event is not part of a series of regularly spaced events (which probably means we encounter seismic airgun shots)
-                if i < 3 or abs((d[i, 0] - d[i - 1, 0]) - (d[i - 1, 0] - d[i - 2, 0])) > merge_delta and abs(
-                        (d[i, 0] - d[i - 2, 0]) - (d[i - 1, 0] - d[i - 3, 0])) > merge_delta:
-                    new_d.append(d[i])
+            if d[i, 0] - new_d[-1][0] > merge_delta:
+                new_d.append(d[i])
         d = np.array(new_d)
-
         detections[station] = d
-
         print(f"Found {len(d)} detections for station {station}")
 
-        # we keep all detections in a single list, sorted by date, to then browse detections
-    stations = list(detections.keys())
-    detections_merged = np.concatenate([[(det[0], det[1], s) for det in detections[s]] for s in stations])
-    detections_merged = detections_merged[detections_merged[:, 1] > min_p_tissnet_primary]
-    detections_merged = detections_merged[np.argsort(detections_merged[:, 0])]
+    return detections
 
-    Path(f"{detections_dir}/cache/").mkdir(parents=True, exist_ok=True)
-    np.save(f"{detections_dir}/cache/detections.npy", detections)
-    np.save(f"{detections_dir}/cache/detections_merged.npy", detections_merged)
 
-    return detections, detections_merged
+def _compute_parallel(lat, lat_step, coords, stations, corner_coordinates,
+                      sound_model, pick_uncertainty, sound_speed_uncertainty, max_clock_drift):
+    print(f"processing parallel {lat:0.2f}°")
 
-def compute_grids(lat_bounds, lon_bounds, grid_size, sound_model, stations,
-                  pick_uncertainty=5, sound_speed_uncertainty=2):
-    pts_lat = np.linspace(lat_bounds[0], lat_bounds[1], grid_size)
-    pts_lon = np.linspace(lon_bounds[0], lon_bounds[1], grid_size)
+    travel_times_local = {s: [[] for _ in range(12)] for s in stations}
+    grid_to_coords_local = []
+    travel_time_uncertainties_local = {s: [[] for _ in range(12)] for s in stations}
+    corner_differences_local = {s: [[] for _ in range(12)] for s in stations}
 
-    grid_max_res_time = (0.5 * np.sqrt(2) * (pts_lat[1] - pts_lat[0]) * 111_000) / (
-                sound_model.sound_speed - sound_speed_uncertainty)
-    grid_tolerance = grid_max_res_time + pick_uncertainty
-    print(f"Grid tolerance of {grid_tolerance:.2f}s")
+    lons = sorted(coords[:, 1])
+    lon_step = lons[1] - lons[0] if len(lons) > 1 else lat_step
 
-    grid_station_travel_time = {s: np.zeros((len(pts_lat), len(pts_lon))) for s in stations}
-    for s in stations:
-        for ilat, lat in enumerate(pts_lat):
-            for ilon, lon in enumerate(pts_lon):
-                grid_station_travel_time[s][ilat, ilon] = sound_model.get_sound_travel_time([lat, lon], s.get_pos())
+    for lon in lons:
+        grid_to_coords_local.append((lat, lon))
 
-    grid_station_couple_travel_time = {s: {s2: np.zeros((len(pts_lat), len(pts_lon))) for s2 in stations} for s in
-                                       stations}
+        for s in stations:
+            d = distance_point_point([lat, lon], s.get_pos(), fast=False)
+
+            corners = []
+            for dlat, dlon in corner_coordinates:
+                lat_corner, lon_corner = lat + dlat * lat_step / 2, lon + dlon * lon_step / 2
+                corners.append(distance_point_point([lat_corner, lon_corner], s.get_pos(), fast=False))
+
+            for m in range(12):
+                start_date = datetime.datetime(1999, 12, 15)
+                date = datetime.datetime(2000, m + 1, 15)
+
+                sound_speed = sound_model.get_sound_speed([lat, lon], s.get_pos(), date)
+                # sound_speed = sound_speeds[m]
+
+                travel_times_local[s][m].append(d / sound_speed)
+
+                # account for detection time uncertainty
+                uncertainty_pick = pick_uncertainty
+                uncertainty_celerity = (d / (sound_speed - sound_speed_uncertainty) -
+                                        d / (sound_speed + sound_speed_uncertainty))
+                max_clock_drift = 0.1 + s.get_clock_error(date, ref_date=start_date,
+                                                          drift_ppm=0.28) if 'clock_drift_ppm' in s.other_kwargs else 0  # if "not_ok" in s.other_kwargs.values() else 0.1
+
+                travel_time_uncertainties_local[s][m].append(
+                    uncertainty_pick + uncertainty_celerity + max_clock_drift)
+
+                corner_differences_local[s][m].append([])
+                for d_corner in corners:
+                    corner_differences_local[s][m][-1].append(d_corner / sound_speed -
+                                                              travel_times_local[s][m][-1])
+
+    return grid_to_coords_local, travel_times_local, travel_time_uncertainties_local, corner_differences_local
+
+
+def compute_grids(grid_to_coords, sound_model, stations,
+                  pick_uncertainty=5, sound_speed_uncertainty=2, max_clock_drift=1):
+    # station -> month -> cell_index -> travel time from this cell to this station at this month
+    # this is not a 2D array because if we are closer to poles, we have less cells (to keep squares)
+    travel_times = {s: [[] for _ in range(12)] for s in stations}
+    travel_time_uncertainties = {s: [[] for _ in range(12)] for s in stations}
+    # given each grid cells are not points, the real source may be at +/- step_m/2 along both lat and lon
+    # given two stations s1 and s2, a grid cell of center I and a source M, we thus look for an upper bound of
+    # d = |(T(M->s1)-T(M->s2)) - T((I->s1)-T(I->s2))|. We make the hypothesis that it happens on a corner.
+    # To compute it, we store T(c->s)-T(I->s) for each corner c of each cells, and for each station s.
+    corner_differences = {s: [[] for _ in range(12)] for s in stations}
+    corner_coordinates = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+
+    # we will make a grid of nearly-squares and compute the side we will use, in km
+    # for this, we use latitudes (whose step should be constant)
+    lats = sorted(np.unique(grid_to_coords[:, 0]))
+    lat_step = abs(lats[1] - lats[0])
+    per_lat = {lat: grid_to_coords[grid_to_coords[:, 0] == lat] for lat in lats}
+
+    # compute each parallel in... Parallel
+    # (note: pool.starmap guarantees the results to be in the same order as the arguments)
+    with Pool(processes=max(1, cpu_count() // 2)) as pool:
+        results = pool.starmap(_compute_parallel, [(lat, lat_step, per_lat[lat], stations, corner_coordinates,
+                                                    sound_model, pick_uncertainty, sound_speed_uncertainty,
+                                                    max_clock_drift) for lat in lats])
+
+    grid_to_coords_new_order = []
+    for result in results:
+        grid_to_coords_new_order.extend(result[0])
+        for s in stations:
+            for m in range(12):
+                travel_times[s][m].extend(result[1][s][m])
+                travel_time_uncertainties[s][m].extend(result[2][s][m])
+                corner_differences[s][m].extend(result[3][s][m])
+
+    travel_times = {s: [np.array(travel_times[s][m]) for m in range(12)] for s in stations}
+    travel_time_uncertainties = {s: [np.array(travel_time_uncertainties[s][m]) for m in range(12)] for s in stations}
+    corner_differences = {s: [np.array(corner_differences[s][m]) for m in range(12)] for s in stations}
+    # station s1 -> station s2 -> month -> cell_index -> expected Time Difference of Arrival (TDoA) from this cell
+    # between s1 and s2 at this month. Asymmetric: we do the travel time of s2 minus the travel time of s1
+    TDoA = {s: {s2: [[] for _ in range(12)] for s2 in stations} for s in
+            stations}
+    TDoA_uncertainties = {s: {s2: [[] for _ in range(12)] for s2 in stations} for s in
+                          stations}
+    max_TDoA = {s: {s2: [[] for _ in range(12)] for s2 in stations} for s in
+                stations}
     for s in stations:
         for s2 in stations:
-            grid_station_couple_travel_time[s][s2] = grid_station_travel_time[s2] - grid_station_travel_time[s]
+            for m in range(12):
+                TDoA[s][s2][m] = travel_times[s2][m] - travel_times[s][m]
 
-    station_max_travel_time = {s: {s2: sound_model.get_sound_travel_time(s.get_pos(), s2.get_pos()) for s2 in stations}
-                               for s in stations}
+                max_corner_diff = np.max(np.abs(corner_differences[s][m] - corner_differences[s2][m]), axis=1)
+                TDoA_uncertainties[s][s2][m] = (travel_time_uncertainties[s][m] + travel_time_uncertainties[s2][m]
+                                                + max_corner_diff)
 
-    return (pts_lat, pts_lon, station_max_travel_time, grid_station_travel_time,
-            grid_station_couple_travel_time, grid_tolerance)
+                mad_idx = np.nanargmax(TDoA[s][s2][m])
+                max_TDoA[s][s2][m] = TDoA[s][s2][m][mad_idx] + TDoA_uncertainties[s][s2][m][mad_idx]
+
+    print("Grid processing finished")
+    return grid_to_coords_new_order, TDoA, max_TDoA, TDoA_uncertainties, travel_times, travel_time_uncertainties
+
+
+# Variables globales du module — remplies une seule fois par init_worker
+SAVE_PATH_ROOT = STATIONS = FIRSTS_DETECTIONS = LASTS_DETECTIONS = None
+MAX_TDoA = DETECTIONS = MERGE_DELTA_S = TDoA = TDoA_UNCERTAINTIES = None
+REQ_CLOSEST_STATIONS = None
+associations = None
+def init_worker(global_data, recursion_limit=5000):
+    global SAVE_PATH_ROOT, STATIONS, FIRSTS_DETECTIONS, LASTS_DETECTIONS
+    global MAX_TDoA, DETECTIONS, MERGE_DELTA_S, TDoA, TDoA_UNCERTAINTIES
+    global REQ_CLOSEST_STATIONS
+    sys.setrecursionlimit(recursion_limit)  # <- Fix cause n°1
+    (SAVE_PATH_ROOT, STATIONS, FIRSTS_DETECTIONS, LASTS_DETECTIONS,
+     MAX_TDoA, DETECTIONS, MERGE_DELTA_S, TDoA, TDoA_UNCERTAINTIES,
+     REQ_CLOSEST_STATIONS) = global_data
+
+
+def process_detection(arg):
+    detection, already_examined, max_reached_per_det = arg
+    local_association = []
+    date1, p1, idx_det1, s1 = detection
+    save_path = SAVE_PATH_ROOT
+    if save_path is not None:
+        save_path = f'{save_path}/{s1.name}-{date1.strftime("%Y%m%d_%H%M%S")}'
+        Path(save_path).mkdir(parents=True, exist_ok=True)
+
+    # list all other stations and sort them by distance from s1
+    other_stations = np.array([s2 for s2 in STATIONS if s2 != s1
+                               and date1 + datetime.timedelta(days=1) > FIRSTS_DETECTIONS[s2]
+                               and date1 - datetime.timedelta(days=1) < LASTS_DETECTIONS[s2]])
+    other_stations = other_stations[np.argsort([MAX_TDoA[s1][s2][date1.month - 1] for s2 in other_stations])]
+
+    # given the detection date1 occurred on station s1, list all the detections of other stations that may be generated by the same source event
+    current_association = {s1:(date1, idx_det1)}
+    candidates = compute_candidates(other_stations, current_association, DETECTIONS, MAX_TDoA, MERGE_DELTA_S)
+
+    # update the list of other stations to only include the ones having at least a candidate detection
+    other_stations = [s for s in other_stations if len(candidates[s]) > 0]
+
+    # define the recursive browsing function (that is responsible for browsing the search space of associations for s1-date1)
+    def backtrack(station_index, current_association, valid_grid, associations, save_path):
+        if station_index == len(other_stations):
+            return
+        station = other_stations[station_index]
+
+        candidates = compute_candidates([station], current_association, DETECTIONS, MAX_TDoA, MERGE_DELTA_S)
+        for idx in candidates[station]:
+            date, p, idx_det = DETECTIONS[station][idx]
+
+            if date in already_examined:
+                # the det was already browsed as main
+                continue
+            if len(other_stations) <= max_reached_per_det[idx_det]-1:
+                # the det already belongs to an association larger that what we could have here
+                continue
+
+            valid_grid_new, dg_new = update_valid_grid(current_association, valid_grid, station, date, TDoA, TDoA_UNCERTAINTIES)
+
+            valid_points_new = np.argwhere(valid_grid_new)[:,0]
+
+            if len(valid_points_new) > 0:
+                current_association[station] = (date, idx_det)
+
+                backtrack(station_index + 1, current_association, valid_grid_new, associations, save_path)
+
+                if np.all([len(current_association) >= max_reached_per_det[idx]-1 for _, idx in current_association.values()]):
+                    update_results(date1, current_association, valid_points_new, local_association, TDoA, TDoA_UNCERTAINTIES)
+                    for _, idx in current_association.values():
+                        max_reached_per_det[idx] = max(max_reached_per_det[idx], len(current_association))
+
+                del current_association[station]
+        # also try without self
+        if station_index >= REQ_CLOSEST_STATIONS:
+            max_len_possible = len(current_association) + (len(other_stations) - (station_index+1))
+            if np.all([max_len_possible >= max_reached_per_det[idx]-1 for _, idx in current_association.values()]):
+                backtrack(station_index + 1, current_association, valid_grid, associations, save_path)
+        return
+
+    if len(other_stations) > max_reached_per_det[idx_det1]-1:
+        backtrack(0, current_association, None, associations, save_path=save_path)
+    return local_association
+
+def process_chunk_simple(chunk_data):
+    chunk_detections, max_reached_per_det = chunk_data
+    chunk_associations = []
+    chunk_examined = set()
+    for det in chunk_detections:
+        local_association = process_detection((det, chunk_examined, max_reached_per_det))
+        chunk_examined.add(det[0])
+        chunk_associations.extend(local_association)
+    return chunk_associations, chunk_examined, max_reached_per_det  # <- renvoie le dict mis à jour

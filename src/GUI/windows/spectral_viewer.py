@@ -307,10 +307,11 @@ class SpectralViewerWindow(QMainWindow):
         except LinAlgError:
             self.srcEstimateLabel.setText(f'The localization algorithm did not converge')
             return
-        time = detection_times[0] + np.mean([(detection_times[i] -
-                        datetime.timedelta(seconds=self.sound_model.get_sound_travel_time(src.x[1:], sensors_positions[i], detection_times[0]))) - detection_times[0]
-                         for i in range(len(sensors_positions))])
-        self.srcEstimateLabel.setText(f'Location estimate : {[float(f"{v:.2f}") for v in src.x]} at '
+        # time = detection_times[0] + np.mean([(detection_times[i] -
+        #                 datetime.timedelta(seconds=self.sound_model.get_sound_travel_time(src.x[1:], sensors_positions[i], detection_times[0]))) - detection_times[0]
+        #                  for i in range(len(sensors_positions))])
+        time = datetime.datetime.fromtimestamp(src.x[0])
+        self.srcEstimateLabel.setText(f'Location estimate : {[float(f"{v:.2f}") for v in src.x[1:]]} at '
                                       f'{time.strftime("%Y%m%d_%H%M%S")} (cost {src.cost:.2f})')
 
         if self.loc_res_path is not None:
