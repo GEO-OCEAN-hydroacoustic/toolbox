@@ -14,7 +14,7 @@ from utils.physics.sound_model.spherical_sound_model import GridSphericalSoundMo
 # ──────────────────────────────────────────────
 
 # Data sources
-DATASETS_CSV = "../../data/dataset_demo.csv"            # station metadata CSV, directory, or None
+DATASETS_CSV = "../../data/demo/dataset_demo.csv"            # station metadata CSV, directory, or None
 EVENTS_PATH = "../../data/GUI/events.yaml"             # event catalog to visualize, or None
 OUTPUT_PATH = "../../data/GUI/localizations.csv"       # where picked events are saved
 
